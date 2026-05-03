@@ -303,6 +303,39 @@ type RestorePostgresRequest struct {
 	Force bool   `json:"force,omitempty"` // required when the database is non-empty
 }
 
+// Postgres projects (per-project users + databases on a shared instance).
+//
+// A project is a (role, database, password, statement_timeout_ms) tuple living
+// on a Postgres instance. Apps bind to projects via `services: [<instance>.<project>]`
+// and receive DATABASE_URL/PG* env vars scoped to that role and database — they
+// cannot see other projects' data.
+type PostgresProject struct {
+	Instance           string    `json:"instance"`
+	Project            string    `json:"project"`
+	Role               string    `json:"role"`
+	Database           string    `json:"database"`
+	URLMasked          string    `json:"url"`                  // postgres://<role>:***@host:port/<db>?sslmode=disable
+	StatementTimeoutMS int       `json:"statement_timeout_ms"` // applied via ALTER ROLE ... SET statement_timeout
+	CreatedAt          time.Time `json:"created_at"`
+}
+
+type CreatePostgresProjectRequest struct {
+	Project            string `json:"project"`
+	StatementTimeoutMS int    `json:"statement_timeout_ms,omitempty"` // default 30000 (30s)
+}
+
+type ListPostgresProjectsResponse struct {
+	Projects []PostgresProject `json:"projects"`
+}
+
+type SetPostgresProjectTimeoutRequest struct {
+	StatementTimeoutMS int `json:"statement_timeout_ms"`
+}
+
+type PostgresProjectURL struct {
+	URL string `json:"url"` // full postgres://<role>:<password>@host:port/<db>
+}
+
 // Managed services — Valkey
 type Valkey struct {
 	Name      string    `json:"name"`

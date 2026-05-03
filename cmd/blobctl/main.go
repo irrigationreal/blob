@@ -62,6 +62,12 @@ Usage:
   blob postgres restore <name> [path|latest] [--force]
   blob postgres destroy <name> [--yes]
 
+  blob postgres project list <instance>
+  blob postgres project create <instance> <project> [--timeout 30s]
+  blob postgres project url <instance> <project>
+  blob postgres project timeout <instance> <project> <duration>
+  blob postgres project destroy <instance> <project> [--yes]
+
   blob valkey list
   blob valkey create <name> [--version V]
   blob valkey url <name>                          Print full REDIS_URL (with password)
@@ -71,7 +77,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.5.0"
+var version = "0.6.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -997,9 +1003,133 @@ func cmdPostgres(args []string) {
 			die("%v", err)
 		}
 		fmt.Printf("restored in %s\n", time.Since(t0).Round(100*time.Millisecond))
+	case "project", "projects":
+		cmdPostgresProject(args[1:])
+		return
 	default:
 		die("unknown postgres subcommand: %s", args[0])
 	}
+}
+
+// cmdPostgresProject handles `blob postgres project <create|list|url|destroy|timeout> ...`.
+//
+// Per-project users isolate two unrelated apps that share one Postgres
+// instance: each project gets its own role + database + scoped password +
+// statement_timeout, and apps bind via `services: [<instance>.<project>]`.
+func cmdPostgresProject(args []string) {
+	if len(args) == 0 {
+		die("usage: blob postgres project <create|list|url|destroy|timeout> ...")
+	}
+	c := mustClient()
+	switch args[0] {
+	case "list", "ls":
+		flags := parseFlags(args[1:])
+		instance := positional(flags, 0)
+		if instance == "" {
+			die("usage: blob postgres project list <instance>")
+		}
+		out, err := c.ListPostgresProjects(context.Background(), instance)
+		if err != nil {
+			die("%v", err)
+		}
+		if len(out.Projects) == 0 {
+			fmt.Printf("no projects on %s yet — try `blob postgres project create %s <project>`\n", instance, instance)
+			return
+		}
+		fmt.Printf("%-20s %-15s %-15s %-12s %s\n", "PROJECT", "ROLE", "DATABASE", "TIMEOUT", "URL")
+		for _, p := range out.Projects {
+			fmt.Printf("%-20s %-15s %-15s %-12s %s\n",
+				p.Project, p.Role, p.Database,
+				humanDurationMS(p.StatementTimeoutMS),
+				p.URLMasked)
+		}
+	case "create":
+		flags := parseFlags(args[1:])
+		instance := positional(flags, 0)
+		project := positional(flags, 1)
+		if instance == "" || project == "" {
+			die("usage: blob postgres project create <instance> <project> [--timeout DURATION]")
+		}
+		timeoutMS := 0
+		if v := flags["timeout"]; v != "" {
+			d, err := time.ParseDuration(v)
+			if err != nil {
+				die("--timeout: %v", err)
+			}
+			timeoutMS = int(d / time.Millisecond)
+		}
+		fmt.Printf("creating project %q on %s...\n", project, instance)
+		t0 := time.Now()
+		out, err := c.CreatePostgresProject(context.Background(), instance, project, timeoutMS)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("ready in %s\n", time.Since(t0).Round(100*time.Millisecond))
+		fmt.Printf("  instance:           %s\n", out.Instance)
+		fmt.Printf("  project:            %s\n", out.Project)
+		fmt.Printf("  role:               %s\n", out.Role)
+		fmt.Printf("  database:           %s\n", out.Database)
+		fmt.Printf("  statement_timeout:  %s\n", humanDurationMS(out.StatementTimeoutMS))
+		fmt.Printf("  url:                %s\n", out.URLMasked)
+		fmt.Println()
+		fmt.Printf("To bind apps, add to blob.yaml:\n  services:\n    - %s.%s\n", out.Instance, out.Project)
+	case "url":
+		flags := parseFlags(args[1:])
+		instance := positional(flags, 0)
+		project := positional(flags, 1)
+		if instance == "" || project == "" {
+			die("usage: blob postgres project url <instance> <project>")
+		}
+		url, err := c.PostgresProjectURL(context.Background(), instance, project)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Println(url)
+	case "destroy", "rm":
+		flags := parseFlags(args[1:])
+		instance := positional(flags, 0)
+		project := positional(flags, 1)
+		if instance == "" || project == "" {
+			die("usage: blob postgres project destroy <instance> <project>")
+		}
+		if flags["yes"] != "true" {
+			fmt.Printf("destroy project %q on %s? this drops the role AND database; type the project name to confirm: ", project, instance)
+			var line string
+			fmt.Fscanln(os.Stdin, &line)
+			if line != project {
+				die("aborted")
+			}
+		}
+		if err := c.DestroyPostgresProject(context.Background(), instance, project); err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("destroyed project %q on %s\n", project, instance)
+	case "timeout":
+		flags := parseFlags(args[1:])
+		instance := positional(flags, 0)
+		project := positional(flags, 1)
+		duration := positional(flags, 2)
+		if instance == "" || project == "" || duration == "" {
+			die("usage: blob postgres project timeout <instance> <project> <duration>  (e.g. 2s, 60s, 5m)")
+		}
+		d, err := time.ParseDuration(duration)
+		if err != nil {
+			die("invalid duration: %v", err)
+		}
+		ms := int(d / time.Millisecond)
+		out, err := c.SetPostgresProjectTimeout(context.Background(), instance, project, ms)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("set %s.%s statement_timeout = %s\n", out.Instance, out.Project, humanDurationMS(out.StatementTimeoutMS))
+	default:
+		die("unknown project subcommand: %s", args[0])
+	}
+}
+
+func humanDurationMS(ms int) string {
+	d := time.Duration(ms) * time.Millisecond
+	return d.String()
 }
 
 func ternary(b bool, a, c string) string {

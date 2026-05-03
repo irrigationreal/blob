@@ -46,6 +46,7 @@ Plus an example with a custom domain attached: <https://static.darv.ai/> (same b
 | **Secrets**: AES-256-GCM at rest, per-environment, env injection | shipped |
 | **Environments** (`prod`, `staging`, `pr-1234`, …)             | shipped  |
 | **Managed Postgres** with `services:` env injection (`DATABASE_URL`) | shipped  |
+| **Per-project Postgres users** (`services: [<instance>.<project>]`) with isolated role + database + per-project `statement_timeout` | shipped  |
 | **Postgres backups** (`blob postgres backup/backups/restore`) | shipped  |
 | **Managed Valkey** (Redis-compatible) with `services:` env injection (`REDIS_URL`) | shipped  |
 | **Custom domains** with `blob domains attach` (auto-HTTPS)     | shipped  |
@@ -70,8 +71,7 @@ The full v1 spec ([`docs/the-blob-spec.md`](docs/the-blob-spec.md)) is the desti
 - Resource graph + manifest projection-hash drift detection
 - Built-in **observability stack** (Loki/Tempo/Prometheus integration)
 - **Autoscaling** beyond explicit `blob scale`
-- **Off-host backup shipping** (backups today live on the platform host's disk; v0.6 adds `--to s3://...` and scheduled cron)
-- **Per-project users on managed services**: today every app binding `services: [my-pg]` shares one role and one database. v0.6 adds `blob postgres project create <instance> <project>` so two unrelated `blob.yaml` files can share a Postgres instance with isolated credentials and per-project databases (`services: [my-pg.payments]` syntax). Same model planned for Valkey via Valkey 8 ACL key-pattern restrictions
+- **Off-host backup shipping** (backups today live on the platform host's disk; v0.7 adds `--to s3://...` and scheduled cron)
 - **Multi-region** active-passive failover
 - **Preview environments** auto-created from CI webhooks
 - **Status pages**, cost rollups, plugins, web console, GPU/confidential compute
@@ -207,6 +207,12 @@ blob postgres backup <name>
 blob postgres backups <name>
 blob postgres restore <name> [path|latest] [--force]
 blob postgres destroy <name> [--yes]
+
+blob postgres project list <instance>
+blob postgres project create <instance> <project> [--timeout 30s]
+blob postgres project url <instance> <project>
+blob postgres project timeout <instance> <project> <duration>
+blob postgres project destroy <instance> <project> [--yes]
 
 blob valkey list
 blob valkey create <name> [--version V]

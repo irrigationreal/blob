@@ -35,10 +35,17 @@ name: guestbook
 form: web-service
 port: 8080
 services:
-  - my-pg
+  - my-pg.payments      # recommended: <instance>.<project> binding (v0.6+)
 ```
 
-At deploy, blobd injects:
+Two binding shapes:
+
+| Syntax              | What you get                                                         | Use when                                |
+|---                  |---                                                                   |---                                      |
+| `my-pg.payments`    | A scoped role + database for this project (see "Per-project users") | Default. One Postgres instance shared across many apps |
+| `my-pg`             | The instance superuser + the instance-named database                | Single-tenant; legacy. Still works.     |
+
+For both shapes, blobd injects:
 
 - `DATABASE_URL` (full DSN)
 - `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`
@@ -79,8 +86,122 @@ Verified end-to-end as part of v0.5 ship: insert a sentinel row → backup → d
 
 #### What backups don't include yet
 
-- Roles other than the auto-created `blob` user (single-tenant per instance for now).
-- Off-host shipping. The backup file lives on the platform host's disk under `/srv/blob/backups/`. v0.6 will add `--to s3://...` and a scheduled cron. Until then: rsync `/srv/blob/backups/postgres/<name>/` to a destination of your choice.
+- **Project-owned databases** (`my-pg.payments` etc.) are NOT in the per-instance backup. Backups currently only cover the instance's superuser-owned database. v0.7 will iterate all project databases on the instance and back each separately.
+- Off-host shipping. The backup file lives on the platform host's disk under `/srv/blob/backups/`. v0.7 will add `--to s3://...` and a scheduled cron. Until then: rsync `/srv/blob/backups/postgres/<name>/` to a destination of your choice.
+
+### Per-project users (v0.6)
+
+A *project* is a `(role, database, password, statement_timeout)` tuple living on a shared Postgres instance. Apps from unrelated `blob.yaml` files can each bind to their own project on the same instance and cannot see each other's data.
+
+```sh
+blob postgres project list <instance>
+blob postgres project create <instance> <project> [--timeout 30s]
+blob postgres project url <instance> <project>
+blob postgres project timeout <instance> <project> <duration>
+blob postgres project destroy <instance> <project>
+```
+
+What `create` runs (as the instance's `blob` superuser, inside the running Postgres container):
+
+```sql
+CREATE ROLE <project> LOGIN PASSWORD '<random>';
+CREATE DATABASE <project> OWNER <project>;
+REVOKE ALL ON DATABASE <project> FROM PUBLIC;
+ALTER ROLE <project> SET statement_timeout = '<ms>';
+```
+
+`destroy` is the inverse: `REASSIGN OWNED + DROP OWNED + DROP DATABASE + DROP ROLE`.
+
+Project name rules: `[a-z][a-z0-9_]{0,30}[a-z0-9]`. Lowercase, digits, underscores; must start with a letter. These are SQL identifiers, so we keep them strict.
+
+#### Statement timeout
+
+Default `30s`. Configurable per project:
+
+```sh
+blob postgres project timeout demo app-a 2s     # tight bound during chaos drills
+blob postgres project timeout demo app-a 5m     # heavy analytics that need it
+```
+
+The CLI accepts any Go `time.Duration` string (`2s`, `500ms`, `5m`, `1h`).
+
+`ALTER ROLE ... SET statement_timeout` only affects new sessions, so v0.6 also runs `pg_terminate_backend(...)` against the role's existing connections after each timeout change. Apps using `pg.Pool` and similar reconnect automatically and pick up the new value within a few seconds.
+
+#### Worked example: two apps on one instance
+
+```yaml
+# repo A: ~/code/iso-app-a/blob.yaml
+name: iso-app-a
+form: web-service
+port: 8080
+services: [demo.app_a]
+```
+
+```yaml
+# repo B: ~/code/iso-app-b/blob.yaml
+name: iso-app-b
+form: web-service
+port: 8080
+services: [demo.app_b]
+```
+
+```sh
+blob postgres project create demo app_a
+blob postgres project create demo app_b
+cd ~/code/iso-app-a && blob deploy
+cd ~/code/iso-app-b && blob deploy
+```
+
+Each app sees:
+- `DATABASE_URL` pointing at its own role + database
+- `current_user` = the project name
+- `current_database()` = the project name
+- Cross-project SELECT (`select * from app_b.secrets` from inside iso-app-a) returns `relation "app_b.secrets" does not exist`
+- Direct CONNECT to the other database returns `FATAL: permission denied for database "app_b"`
+
+#### What per-project users do NOT do (yet)
+
+- **Schema-level sharing**: there's no way to deliberately share a table between two projects. If two apps need to read the same data, they need either (a) one project they both bind to, or (b) the legacy `services: [<instance>]` binding for one of them with a manual `GRANT`.
+- **Backup/restore is per-instance, not per-project**. See backup section above.
+- **Quota / disk caps per project**. Postgres has `ALTER USER ... CONNECTION LIMIT` and `ALTER DATABASE ... CONNECTION LIMIT` we can wire later; for now all projects share the instance's resources.
+
+#### Verified live as part of v0.6 ship
+
+Two real apps deployed at <https://iso-app-a.irrigate.cc/secret> and <https://iso-app-b.irrigate.cc/secret>. Each returns its own secret + the cross-project read attempt's error string:
+
+```
+GET https://iso-app-a.irrigate.cc/secret
+{
+  "app": "app_a",
+  "pg_user": "app_a",
+  "pg_database": "app_a",
+  "own_secret": "app_a-secret-yadbpk",
+  "cross_project_read": "relation \"app_b.secrets\" does not exist"
+}
+
+GET https://iso-app-b.irrigate.cc/secret
+{
+  "app": "app_b",
+  "pg_user": "app_b",
+  "pg_database": "app_b",
+  "own_secret": "app_b-secret-xgirsa",
+  "cross_project_read": "relation \"app_a.secrets\" does not exist"
+}
+```
+
+Statement timeout round-trip:
+
+```
+$ blob postgres project timeout demo app_a 2s
+set demo.app_a statement_timeout = 2s
+$ time curl -s https://iso-app-a.irrigate.cc/slow
+{"ok":false,"error":"canceling statement due to statement timeout"}
+real    0m2.23s
+$ blob postgres project timeout demo app_a 60s
+$ time curl -s https://iso-app-a.irrigate.cc/slow
+{"ok":true,"result":{"pg_sleep":"","msg":"finished after sleep"}}
+real    0m5.23s
+```
 
 ### Resource sizing
 

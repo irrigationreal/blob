@@ -304,6 +304,46 @@ func (c *Client) RestorePostgres(ctx context.Context, name, path string, force b
 	return c.do(ctx, "POST", "/v1/postgres/"+url.PathEscape(name)+"/restore", &api.RestorePostgresRequest{Path: path, Force: force}, nil)
 }
 
+// --- managed services: postgres projects (per-tenant role + database) ---
+
+func (c *Client) ListPostgresProjects(ctx context.Context, instance string) (*api.ListPostgresProjectsResponse, error) {
+	out := &api.ListPostgresProjectsResponse{}
+	if err := c.do(ctx, "GET", "/v1/postgres/"+url.PathEscape(instance)+"/projects", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) CreatePostgresProject(ctx context.Context, instance, project string, timeoutMS int) (*api.PostgresProject, error) {
+	out := &api.PostgresProject{}
+	req := &api.CreatePostgresProjectRequest{Project: project, StatementTimeoutMS: timeoutMS}
+	if err := c.do(ctx, "POST", "/v1/postgres/"+url.PathEscape(instance)+"/projects", req, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) PostgresProjectURL(ctx context.Context, instance, project string) (string, error) {
+	out := &api.PostgresProjectURL{}
+	if err := c.do(ctx, "GET", "/v1/postgres/"+url.PathEscape(instance)+"/projects/"+url.PathEscape(project)+"/url", nil, out); err != nil {
+		return "", err
+	}
+	return out.URL, nil
+}
+
+func (c *Client) DestroyPostgresProject(ctx context.Context, instance, project string) error {
+	return c.do(ctx, "DELETE", "/v1/postgres/"+url.PathEscape(instance)+"/projects/"+url.PathEscape(project), nil, nil)
+}
+
+func (c *Client) SetPostgresProjectTimeout(ctx context.Context, instance, project string, timeoutMS int) (*api.PostgresProject, error) {
+	out := &api.PostgresProject{}
+	req := &api.SetPostgresProjectTimeoutRequest{StatementTimeoutMS: timeoutMS}
+	if err := c.do(ctx, "POST", "/v1/postgres/"+url.PathEscape(instance)+"/projects/"+url.PathEscape(project)+"/timeout", req, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // --- managed services: valkey ---
 
 func (c *Client) ListValkey(ctx context.Context) (*api.ListValkeyResponse, error) {

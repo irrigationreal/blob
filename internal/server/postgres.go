@@ -159,6 +159,19 @@ func (s *Server) handlePostgresItem(w http.ResponseWriter, r *http.Request) {
 		s.handlePostgresBackupsList(w, r, name)
 	case len(parts) == 2 && parts[1] == "restore" && r.Method == "POST":
 		s.handlePostgresRestore(w, r, name)
+	case len(parts) == 2 && parts[1] == "projects":
+		// /v1/postgres/<instance>/projects (GET list, POST create)
+		s.handlePostgresProjects(w, r, name)
+	case len(parts) == 2 && strings.HasPrefix(parts[1], "projects/"):
+		// /v1/postgres/<instance>/projects/<project>[/<sub>]
+		rest2 := strings.TrimPrefix(parts[1], "projects/")
+		ps := strings.SplitN(rest2, "/", 2)
+		project := ps[0]
+		sub := ""
+		if len(ps) == 2 {
+			sub = ps[1]
+		}
+		s.handlePostgresProjectItem(w, r, name, project, sub)
 	default:
 		writeErr(w, 404, "not found")
 	}
@@ -339,6 +352,10 @@ func (s *Server) waitPostgresReady(ctx context.Context, m *postgresMeta, timeout
 // resolveServices looks up each managed-service binding and merges its env
 // vars into req.Env. Tries Postgres first, then Valkey. The first binding
 // wins the canonical "DATABASE_URL"/"REDIS_URL" slot per family.
+//
+// Binding syntax:
+//   - "<instance>"             — legacy: superuser role, instance-named database
+//   - "<instance>.<project>"   — per-project role, per-project database (v0.6+)
 func (s *Server) resolveServices(req *api.DeployRequest) error {
 	if len(req.Services) == 0 {
 		return nil
@@ -349,7 +366,40 @@ func (s *Server) resolveServices(req *api.DeployRequest) error {
 	pgPrimary := true
 	redisPrimary := true
 	for _, svc := range req.Services {
-		// Try Postgres
+		// Try project binding first ("instance.project").
+		if instance, project := parseProjectBinding(svc); project != "" {
+			pm, err := s.loadProject(instance, project)
+			if err != nil {
+				return fmt.Errorf("project binding %q not found", svc)
+			}
+			im, err := s.loadPostgres(instance)
+			if err != nil {
+				return fmt.Errorf("instance %q not found", instance)
+			}
+			host := s.postgresHost()
+			dsn := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable",
+				pm.Role, pm.Password, host, im.Port, pm.Database)
+			if pgPrimary {
+				req.Env["DATABASE_URL"] = dsn
+				req.Env["PGHOST"] = host
+				req.Env["PGPORT"] = fmt.Sprintf("%d", im.Port)
+				req.Env["PGUSER"] = pm.Role
+				req.Env["PGPASSWORD"] = pm.Password
+				req.Env["PGDATABASE"] = pm.Database
+				pgPrimary = false
+			}
+			// Per-binding prefixed envs use the project name (the instance is
+			// just the underlying pool — apps don't care which one).
+			envPrefix := strings.ToUpper(strings.ReplaceAll(project, "-", "_"))
+			req.Env[envPrefix+"_URL"] = dsn
+			req.Env[envPrefix+"_HOST"] = host
+			req.Env[envPrefix+"_PORT"] = fmt.Sprintf("%d", im.Port)
+			req.Env[envPrefix+"_USER"] = pm.Role
+			req.Env[envPrefix+"_PASSWORD"] = pm.Password
+			req.Env[envPrefix+"_DATABASE"] = pm.Database
+			continue
+		}
+		// Try Postgres instance (legacy bare-name binding)
 		if m, err := s.loadPostgres(svc); err == nil {
 			host := s.postgresHost()
 			dsn := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable",
