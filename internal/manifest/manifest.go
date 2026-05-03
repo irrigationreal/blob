@@ -10,24 +10,63 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Manifest is the v1 blob.yaml shape. It is intentionally small.
-type Manifest struct {
-	Name     string            `yaml:"name"`
-	Form     string            `yaml:"form,omitempty"` // web-service | daemon | cronjob | job | function | vm
-	Domain   string            `yaml:"domain,omitempty"`
-	Port     int               `yaml:"port,omitempty"`
-	Image    string            `yaml:"image,omitempty"`
-	CPU      int               `yaml:"cpu,omitempty"`
-	Memory   int               `yaml:"memory,omitempty"`
-	Replicas int               `yaml:"replicas,omitempty"`
-	Env      map[string]string `yaml:"env,omitempty"`
+// Component is a single workload that can stand on its own. A top-level
+// Manifest is itself a component plus app-level orchestration (Components).
+type Component struct {
+	Name     string            `yaml:"name,omitempty"`     // optional in single-component manifests; required when used inside Components
+	Form     string            `yaml:"form,omitempty"`     // web-service | daemon | job | cronjob
+	Domain   string            `yaml:"domain,omitempty"`   // overrides default <name>.<base>
+	Port     int               `yaml:"port,omitempty"`     // required for web-service unless inferable
+	Image    string            `yaml:"image,omitempty"`    // if set, deploy registry image directly
+	Command  []string          `yaml:"command,omitempty"`  // override the image's entrypoint command (useful for multi-component apps sharing one image)
+	CPU      int               `yaml:"cpu,omitempty"`      // MHz
+	Memory   int               `yaml:"memory,omitempty"`   // MiB
+	Replicas int               `yaml:"replicas,omitempty"` // count
+	Env      map[string]string `yaml:"env,omitempty"`      // literal env vars
+	Secrets  []SecretRef       `yaml:"secrets,omitempty"`  // env vars sourced from the secret store
 	Schedule string            `yaml:"schedule,omitempty"` // cron expression for cronjob form
+	Volumes  []VolumeMount     `yaml:"volumes,omitempty"`  // host-bind volumes (Docker volumes by name)
+	Sidecars []Sidecar         `yaml:"sidecars,omitempty"` // additional containers in the same Nomad group (Bundle)
+}
+
+// Sidecar is a co-scheduled container in the same Nomad group.
+// Shares the network namespace with the primary task.
+type Sidecar struct {
+	Name   string            `yaml:"name"`
+	Image  string            `yaml:"image"`
+	CPU    int               `yaml:"cpu,omitempty"`
+	Memory int               `yaml:"memory,omitempty"`
+	Env    map[string]string `yaml:"env,omitempty"`
+	Args   []string          `yaml:"args,omitempty"`
+}
+
+// VolumeMount declares a Docker named volume mounted into the workload.
+// Persists across redeploys; managed by `blob volume ...`.
+type VolumeMount struct {
+	Name string `yaml:"name"` // logical name (a per-app volume; the actual Docker volume is blob-<app>-<name>)
+	Path string `yaml:"path"` // mount path inside the container
+}
+
+// SecretRef binds a stored secret (by name) to an env var.
+// Values are stored encrypted in the blobd state directory and injected
+// into the container's environment at deploy time.
+type SecretRef struct {
+	Env  string `yaml:"env"`  // env var name inside the container
+	Name string `yaml:"name"` // secret name in the store (per-environment scope)
+}
+
+// Manifest represents a blob.yaml. A manifest can be either:
+//   - a single Component (top-level Name + Form, no Components list), or
+//   - an App (top-level Name + Components list).
+type Manifest struct {
+	Component   `yaml:",inline"`         // single-component shorthand
+	Environment string      `yaml:"environment,omitempty"` // prod | staging | pr-NNN ...
+	Components  []Component `yaml:"components,omitempty"`  // multi-component App
 }
 
 var nameRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
-// Load reads blob.yaml from a path. If the file is missing it returns
-// an empty Manifest with ErrNotFound so callers can fall back to defaults.
+// Load reads blob.yaml from a path.
 func Load(path string) (*Manifest, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -42,20 +81,34 @@ func Load(path string) (*Manifest, error) {
 }
 
 func (m *Manifest) applyDefaults() {
-	if m.Form == "" {
-		m.Form = "web-service"
+	if m.Environment == "" {
+		m.Environment = "prod"
 	}
-	if m.CPU == 0 {
-		m.CPU = 500
-	}
-	if m.Memory == 0 {
-		m.Memory = 512
-	}
-	if m.Replicas == 0 {
-		m.Replicas = 1
+	m.Component.applyDefaults()
+	for i := range m.Components {
+		m.Components[i].applyDefaults()
 	}
 	m.Name = strings.ToLower(strings.TrimSpace(m.Name))
 }
+
+func (c *Component) applyDefaults() {
+	if c.Form == "" {
+		c.Form = "web-service"
+	}
+	if c.CPU == 0 {
+		c.CPU = 500
+	}
+	if c.Memory == 0 {
+		c.Memory = 512
+	}
+	if c.Replicas == 0 {
+		c.Replicas = 1
+	}
+	c.Name = strings.ToLower(strings.TrimSpace(c.Name))
+}
+
+// IsApp returns true if this manifest declares multiple components.
+func (m *Manifest) IsApp() bool { return len(m.Components) > 0 }
 
 // Validate returns an error if the manifest is unusable.
 func (m *Manifest) Validate() error {
@@ -63,20 +116,59 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("manifest: name is required")
 	}
 	if !nameRE.MatchString(m.Name) {
-		return fmt.Errorf("manifest: invalid name %q (must be lowercase, digits, hyphens; start and end alphanumeric)", m.Name)
+		return fmt.Errorf("manifest: invalid name %q (lowercase a-z 0-9 hyphens)", m.Name)
 	}
-	switch m.Form {
+	if m.Environment != "" && !envRE.MatchString(m.Environment) {
+		return fmt.Errorf("manifest: invalid environment %q", m.Environment)
+	}
+	if m.IsApp() {
+		// In app form, top-level form/port/etc. are ignored. Components are validated.
+		seen := map[string]bool{}
+		for i, c := range m.Components {
+			if c.Name == "" {
+				return fmt.Errorf("components[%d]: name is required", i)
+			}
+			if seen[c.Name] {
+				return fmt.Errorf("components: duplicate component name %q", c.Name)
+			}
+			seen[c.Name] = true
+			if err := c.validate(); err != nil {
+				return fmt.Errorf("components[%s]: %w", c.Name, err)
+			}
+		}
+		return nil
+	}
+	return m.Component.validate()
+}
+
+var envRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`)
+
+func (c *Component) validate() error {
+	switch c.Form {
 	case "web-service", "daemon", "job", "cronjob":
 	case "function", "vm":
-		return fmt.Errorf("manifest: form %q is reserved but not yet implemented in v1", m.Form)
+		return fmt.Errorf("form %q is reserved but not yet implemented", c.Form)
 	default:
-		return fmt.Errorf("manifest: unknown form %q", m.Form)
+		return fmt.Errorf("unknown form %q", c.Form)
 	}
-	if m.Form == "web-service" && m.Port <= 0 {
-		// Port can be inferred at deploy time from compose/EXPOSE; allowed to be empty.
+	if c.Form == "cronjob" && c.Schedule == "" {
+		return fmt.Errorf("cronjob requires schedule")
 	}
-	if m.Form == "cronjob" && m.Schedule == "" {
-		return fmt.Errorf("manifest: cronjob requires schedule")
+	for _, s := range c.Secrets {
+		if s.Env == "" || s.Name == "" {
+			return fmt.Errorf("secret ref needs both env and name")
+		}
+		if !nameRE.MatchString(s.Name) {
+			return fmt.Errorf("invalid secret name %q", s.Name)
+		}
+	}
+	for _, v := range c.Volumes {
+		if v.Name == "" || v.Path == "" {
+			return fmt.Errorf("volume needs both name and path")
+		}
+		if !nameRE.MatchString(v.Name) {
+			return fmt.Errorf("invalid volume name %q", v.Name)
+		}
 	}
 	return nil
 }

@@ -1,9 +1,10 @@
 // Package server implements the blobd HTTP API.
 //
-// It runs on the platform host and wraps the existing Nomad/Docker/Traefik
-// pipeline. Source uploads are unpacked into /srv/blob/sources/<app>, built
-// with `docker build` (or compose), pushed to the registry, then submitted
-// as a Nomad job with Traefik routing tags.
+// blobd runs on a platform host that already has Nomad, Docker, Traefik,
+// and a private container registry. It wraps that substrate with a clean
+// agent-friendly API: source upload, multi-form deploy (web-service,
+// daemon, job, cronjob, app), secrets, environments, scaling, custom
+// domains, and a doctor.
 package server
 
 import (
@@ -27,56 +28,67 @@ import (
 	"time"
 
 	"github.com/darvell/blob/internal/api"
+	"github.com/darvell/blob/internal/secrets"
 )
 
 type Config struct {
-	Listen          string
-	Token           string // bearer token for API access
-	BaseDomain      string // e.g. irrigate.cc
-	Datacenter      string // Nomad DC, e.g. pve
-	Registry        string // e.g. registry.irrigate.cc
-	StateDir        string // /srv/blob
-	JobsDir         string // /srv/blob/jobs
-	SourcesDir      string // /srv/blob/sources
-	NomadAddr       string // http://127.0.0.1:4646
-	BuilderUser     string // user owning /srv/blob (defaults to current)
-	RegistryCreds   string // path to credentials file (key: username/password)
-	HostBuildOnLoad bool   // build images on this host
+	Listen        string
+	Token         string
+	BaseDomain    string
+	Datacenter    string
+	Registry      string
+	StateDir      string
+	JobsDir       string
+	SourcesDir    string
+	SecretsDir    string
+	SecretKey     string
+	NomadAddr     string
+	RegistryCreds string
 }
 
 func DefaultConfig() Config {
 	return Config{
-		Listen:          ":8787",
-		BaseDomain:      "irrigate.cc",
-		Datacenter:      "pve",
-		Registry:        "registry.irrigate.cc",
-		StateDir:        "/srv/blob",
-		JobsDir:         "/srv/blob/jobs",
-		SourcesDir:      "/srv/blob/sources",
-		NomadAddr:       "http://127.0.0.1:4646",
-		RegistryCreds:   "/etc/blob/registry-credentials.txt",
-		HostBuildOnLoad: true,
+		Listen:        ":8787",
+		BaseDomain:    "irrigate.cc",
+		Datacenter:    "pve",
+		Registry:      "registry.irrigate.cc",
+		StateDir:      "/srv/blob",
+		JobsDir:       "/srv/blob/jobs",
+		SourcesDir:    "/srv/blob/sources",
+		SecretsDir:    "/srv/blob/secrets",
+		SecretKey:     "/etc/blob/secret-key",
+		NomadAddr:     "http://127.0.0.1:4646",
+		RegistryCreds: "/etc/blob/registry-credentials.txt",
 	}
 }
 
 type Server struct {
-	cfg Config
-	mu  sync.Mutex
+	cfg     Config
+	secrets *secrets.Store
+	mu      sync.Mutex
 }
 
-func New(cfg Config) *Server {
-	return &Server{cfg: cfg}
+func New(cfg Config) (*Server, error) {
+	store, err := secrets.New(cfg.SecretsDir, cfg.SecretKey)
+	if err != nil {
+		return nil, fmt.Errorf("secrets: %w", err)
+	}
+	return &Server{cfg: cfg, secrets: store}, nil
 }
 
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok\n")) })
 	mux.HandleFunc("/v1/whoami", s.handleWhoAmI)
 	mux.HandleFunc("/v1/sources/", s.handleUploadSource)
 	mux.HandleFunc("/v1/deploy", s.handleDeploy)
 	mux.HandleFunc("/v1/deploy-image", s.handleDeployImage)
+	mux.HandleFunc("/v1/deploy-app", s.handleDeployApp)
 	mux.HandleFunc("/v1/apps", s.handleApps)
 	mux.HandleFunc("/v1/apps/", s.handleAppItem)
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok\n")) })
+	mux.HandleFunc("/v1/secrets", s.handleSecrets)
+	mux.HandleFunc("/v1/secrets/", s.handleSecretItem)
+	mux.HandleFunc("/v1/doctor", s.handleDoctor)
 	return s.withAuth(mux)
 }
 
@@ -115,8 +127,23 @@ func (s *Server) handleWhoAmI(w http.ResponseWriter, r *http.Request) {
 }
 
 var nameRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+var envRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`)
 
 func validName(s string) bool { return nameRE.MatchString(s) }
+func validEnv(s string) bool  { return s == "" || envRE.MatchString(s) }
+
+// jobID returns the Nomad job ID for an app/component/environment combination.
+// prod is bare (`<app>` or `<app>-<component>`); other environments append `-env-<name>`.
+func jobID(app, env, component string) string {
+	id := app
+	if component != "" && component != app {
+		id = app + "-" + component
+	}
+	if env != "" && env != "prod" {
+		id = id + "-env-" + env
+	}
+	return id
+}
 
 func (s *Server) handleUploadSource(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
@@ -196,6 +223,8 @@ func untar(dest string, r io.Reader) error {
 	return nil
 }
 
+// --- deploy handlers ---------------------------------------------------------
+
 func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		writeErr(w, 405, "method not allowed")
@@ -210,12 +239,16 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "invalid app name")
 		return
 	}
+	if !validEnv(req.Environment) {
+		writeErr(w, 400, "invalid environment")
+		return
+	}
 	src := filepath.Join(s.cfg.SourcesDir, req.App)
 	if _, err := os.Stat(src); err != nil {
 		writeErr(w, 400, "no source uploaded for "+req.App)
 		return
 	}
-	out, err := s.deployFromSource(r.Context(), src, &req)
+	out, err := s.deployFromSource(r.Context(), src, &req, req.App)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -237,20 +270,80 @@ func (s *Server) handleDeployImage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "invalid app name")
 		return
 	}
+	if !validEnv(req.Environment) {
+		writeErr(w, 400, "invalid environment")
+		return
+	}
 	if req.Tag == "" {
-		writeErr(w, 400, "image (tag) is required for deploy-image")
+		writeErr(w, 400, "image (tag) is required")
 		return
 	}
-	if req.Port <= 0 {
-		writeErr(w, 400, "port is required for deploy-image")
-		return
+	if req.Form == "" || req.Form == "web-service" {
+		if req.Port <= 0 {
+			writeErr(w, 400, "port is required for web-service")
+			return
+		}
 	}
-	out, err := s.deployImage(r.Context(), &req)
+	out, err := s.deployImage(r.Context(), &req, req.App)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
 	writeJSON(w, 200, out)
+}
+
+func (s *Server) handleDeployApp(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		writeErr(w, 405, "method not allowed")
+		return
+	}
+	var req api.DeployAppRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, 400, "decode: "+err.Error())
+		return
+	}
+	if !validName(req.App) {
+		writeErr(w, 400, "invalid app name")
+		return
+	}
+	if !validEnv(req.Environment) {
+		writeErr(w, 400, "invalid environment")
+		return
+	}
+	if len(req.Components) == 0 {
+		writeErr(w, 400, "components: at least one component required")
+		return
+	}
+	resp := &api.DeployAppResponse{App: req.App}
+	for i := range req.Components {
+		c := &req.Components[i]
+		if c.Environment == "" {
+			c.Environment = req.Environment
+		}
+		if !validName(c.App) {
+			writeErr(w, 400, "component name invalid: "+c.App)
+			return
+		}
+		var cdr *api.DeployResponse
+		var err error
+		if c.Tag != "" {
+			// component used a pre-built image
+			cdr, err = s.deployImage(r.Context(), c, req.App)
+		} else {
+			src := filepath.Join(s.cfg.SourcesDir, req.App)
+			if _, err2 := os.Stat(src); err2 != nil {
+				writeErr(w, 400, "no source uploaded for "+req.App)
+				return
+			}
+			cdr, err = s.deployFromSource(r.Context(), src, c, req.App)
+		}
+		if err != nil {
+			writeErr(w, 500, "component "+c.App+": "+err.Error())
+			return
+		}
+		resp.Components = append(resp.Components, *cdr)
+	}
+	writeJSON(w, 200, resp)
 }
 
 func (s *Server) handleApps(w http.ResponseWriter, r *http.Request) {
@@ -299,6 +392,21 @@ func (s *Server) handleAppItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, 200, api.LogsResponse{App: app, Lines: lines})
+	case len(parts) == 2 && parts[1] == "scale" && r.Method == "POST":
+		var sr api.ScaleRequest
+		if err := json.NewDecoder(r.Body).Decode(&sr); err != nil {
+			writeErr(w, 400, err.Error())
+			return
+		}
+		if sr.Replicas < 0 {
+			writeErr(w, 400, "replicas must be >= 0")
+			return
+		}
+		if err := s.scaleApp(r.Context(), app, sr.Replicas); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		writeJSON(w, 200, map[string]any{"app": app, "replicas": sr.Replicas})
 	default:
 		writeErr(w, 404, "not found")
 	}
@@ -311,27 +419,36 @@ type buildResult struct {
 	Port  int
 }
 
-func (s *Server) deployFromSource(ctx context.Context, src string, req *api.DeployRequest) (*api.DeployResponse, error) {
-	out := &api.DeployResponse{App: req.App, StartedAt: time.Now()}
-	domain := req.Domain
-	if domain == "" {
-		domain = req.App + "." + s.cfg.BaseDomain
+func (s *Server) deployFromSource(ctx context.Context, src string, req *api.DeployRequest, sourceApp string) (*api.DeployResponse, error) {
+	out := &api.DeployResponse{App: req.App, Environment: req.Environment, StartedAt: time.Now()}
+	id := jobID(req.App, req.Environment, "")
+	form := req.Form
+	if form == "" {
+		form = "web-service"
 	}
-	out.Domain = domain
-	out.URL = "https://" + domain
+	domain := req.Domain
+	if form == "web-service" {
+		if domain == "" {
+			if req.Environment != "" && req.Environment != "prod" {
+				domain = id + "." + s.cfg.BaseDomain
+			} else {
+				domain = req.App + "." + s.cfg.BaseDomain
+			}
+		}
+		out.Domain = domain
+		out.URL = "https://" + domain
+	}
 
 	tag := req.Tag
 	if tag == "" {
 		tag = strconv.FormatInt(time.Now().Unix(), 10)
 	}
-	image := fmt.Sprintf("%s/%s:%s", s.cfg.Registry, req.App, tag)
+	image := fmt.Sprintf("%s/%s:%s", s.cfg.Registry, sourceApp, tag)
 
-	// Phase: registry login
 	if err := s.recordPhase(out, "registry-login", func() error { return s.dockerLoginRegistry(ctx) }); err != nil {
 		return nil, err
 	}
 
-	// Phase: build
 	br := buildResult{Image: image, Port: req.Port}
 	if err := s.recordPhase(out, "build", func() error {
 		built, err := s.buildSource(ctx, src, image, req.Port)
@@ -343,55 +460,76 @@ func (s *Server) deployFromSource(ctx context.Context, src string, req *api.Depl
 	}); err != nil {
 		return nil, err
 	}
-	if br.Port == 0 && req.Form == "web-service" {
+	if br.Port == 0 && form == "web-service" {
 		return nil, errors.New("could not detect a port; set port in blob.yaml or pass --port")
 	}
 
-	// Phase: push
 	if err := s.recordPhase(out, "push", func() error {
 		return s.run(ctx, "docker", "push", br.Image)
 	}); err != nil {
 		return nil, err
 	}
 
-	// Phase: schedule
-	jobID := req.App
+	// Resolve secret references into env vars before rendering the job.
+	if err := s.resolveSecrets(req); err != nil {
+		return nil, err
+	}
+
 	if err := s.recordPhase(out, "schedule", func() error {
-		return s.scheduleNomad(ctx, req, br.Image, br.Port, domain)
+		return s.scheduleJob(ctx, req, br.Image, br.Port, domain, id)
 	}); err != nil {
 		return nil, err
 	}
 	out.Image = br.Image
-	out.JobID = jobID
+	out.JobID = id
 
-	// Phase: wait
-	if err := s.recordPhase(out, "ready", func() error { return s.waitJobRunning(ctx, jobID, 60*time.Second) }); err != nil {
-		return out, fmt.Errorf("did not become ready: %w", err)
+	// For batch (job/cronjob) the workload exits naturally; only wait for
+	// service-style forms.
+	if form == "web-service" || form == "daemon" {
+		if err := s.recordPhase(out, "ready", func() error { return s.waitJobRunning(ctx, id, 60*time.Second) }); err != nil {
+			return out, fmt.Errorf("did not become ready: %w", err)
+		}
 	}
 	return out, nil
 }
 
-func (s *Server) deployImage(ctx context.Context, req *api.DeployRequest) (*api.DeployResponse, error) {
-	out := &api.DeployResponse{App: req.App, StartedAt: time.Now()}
-	domain := req.Domain
-	if domain == "" {
-		domain = req.App + "." + s.cfg.BaseDomain
+func (s *Server) deployImage(ctx context.Context, req *api.DeployRequest, sourceApp string) (*api.DeployResponse, error) {
+	out := &api.DeployResponse{App: req.App, Environment: req.Environment, StartedAt: time.Now()}
+	id := jobID(req.App, req.Environment, "")
+	form := req.Form
+	if form == "" {
+		form = "web-service"
 	}
-	out.Domain = domain
-	out.URL = "https://" + domain
+	domain := req.Domain
+	if form == "web-service" {
+		if domain == "" {
+			if req.Environment != "" && req.Environment != "prod" {
+				domain = id + "." + s.cfg.BaseDomain
+			} else {
+				domain = req.App + "." + s.cfg.BaseDomain
+			}
+		}
+		out.Domain = domain
+		out.URL = "https://" + domain
+	}
 	image := req.Tag
 	if !strings.Contains(image, "/") {
 		image = s.cfg.Registry + "/" + image
 	}
 	out.Image = image
+	if err := s.resolveSecrets(req); err != nil {
+		return nil, err
+	}
 	if err := s.recordPhase(out, "schedule", func() error {
-		return s.scheduleNomad(ctx, req, image, req.Port, domain)
+		return s.scheduleJob(ctx, req, image, req.Port, domain, id)
 	}); err != nil {
 		return nil, err
 	}
-	out.JobID = req.App
-	if err := s.recordPhase(out, "ready", func() error { return s.waitJobRunning(ctx, req.App, 60*time.Second) }); err != nil {
-		return out, fmt.Errorf("did not become ready: %w", err)
+	out.JobID = id
+	if form == "web-service" || form == "daemon" {
+		if err := s.recordPhase(out, "ready", func() error { return s.waitJobRunning(ctx, id, 60*time.Second) }); err != nil {
+			return out, fmt.Errorf("did not become ready: %w", err)
+		}
 	}
 	return out, nil
 }
@@ -415,6 +553,23 @@ func (s *Server) recordPhase(out *api.DeployResponse, name string, fn func() err
 		return fmt.Errorf("%s: %w", name, err)
 	}
 	log.Printf("phase %s ok in %s", name, d)
+	return nil
+}
+
+func (s *Server) resolveSecrets(req *api.DeployRequest) error {
+	if len(req.Secrets) == 0 {
+		return nil
+	}
+	if req.Env == nil {
+		req.Env = map[string]string{}
+	}
+	for _, sb := range req.Secrets {
+		v, err := s.secrets.Get(req.Environment, sb.Name)
+		if err != nil {
+			return fmt.Errorf("secret %q (env=%q) not found", sb.Name, req.Environment)
+		}
+		req.Env[sb.Env] = v
+	}
 	return nil
 }
 
@@ -453,14 +608,12 @@ func (s *Server) readRegistryCreds() (string, string, error) {
 
 func (s *Server) buildSource(ctx context.Context, src, image string, portArg int) (buildResult, error) {
 	br := buildResult{Image: image, Port: portArg}
-	// Compose first
 	for _, n := range []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"} {
 		p := filepath.Join(src, n)
 		if _, err := os.Stat(p); err == nil {
 			return s.buildCompose(ctx, src, p, image, portArg)
 		}
 	}
-	// Dockerfile
 	df := filepath.Join(src, "Dockerfile")
 	if _, err := os.Stat(df); err == nil {
 		if err := s.run(ctx, "docker", "build", "-t", image, src); err != nil {
@@ -473,7 +626,6 @@ func (s *Server) buildSource(ctx context.Context, src, image string, portArg int
 
 func (s *Server) buildCompose(ctx context.Context, src, composeFile, image string, portArg int) (buildResult, error) {
 	br := buildResult{Image: image, Port: portArg}
-	// Resolve config to JSON to find the first service.
 	cmd := exec.CommandContext(ctx, "docker", "compose", "-f", composeFile, "config", "--format", "json")
 	cmd.Dir = src
 	var stdout strings.Builder
@@ -533,16 +685,54 @@ func (s *Server) buildCompose(ctx context.Context, src, composeFile, image strin
 	return br, nil
 }
 
-func (s *Server) scheduleNomad(ctx context.Context, req *api.DeployRequest, image string, port int, domain string) error {
+func (s *Server) scheduleJob(ctx context.Context, req *api.DeployRequest, image string, port int, domain, id string) error {
 	if err := os.MkdirAll(s.cfg.JobsDir, 0o755); err != nil {
 		return err
 	}
-	job := renderNomadJob(req.App, image, port, domain, req.CPU, req.Memory, req.Replicas, req.Form, req.Env, s.cfg.Datacenter)
-	jobPath := filepath.Join(s.cfg.JobsDir, req.App+".nomad")
-	if err := os.WriteFile(jobPath, []byte(job), 0o644); err != nil {
+	hcl := renderJob(req, image, port, domain, s.cfg.Datacenter, id)
+	jobPath := filepath.Join(s.cfg.JobsDir, id+".nomad")
+	if err := os.WriteFile(jobPath, []byte(hcl), 0o644); err != nil {
 		return err
 	}
+	// Side-by-side metadata: form, environment, domain. Used by listApps/status
+	// because the Nomad API alone can't distinguish web-service from daemon.
+	meta := jobMeta{
+		ID:          id,
+		App:         req.App,
+		Environment: req.Environment,
+		Form:        req.Form,
+		Domain:      domain,
+		Image:       image,
+		UpdatedAt:   time.Now(),
+	}
+	if meta.Form == "" {
+		meta.Form = "web-service"
+	}
+	mb, _ := json.MarshalIndent(meta, "", "  ")
+	_ = os.WriteFile(filepath.Join(s.cfg.JobsDir, id+".meta.json"), mb, 0o644)
 	return s.run(ctx, "nomad", "job", "run", jobPath)
+}
+
+type jobMeta struct {
+	ID          string    `json:"id"`
+	App         string    `json:"app"`
+	Environment string    `json:"environment"`
+	Form        string    `json:"form"`
+	Domain      string    `json:"domain"`
+	Image       string    `json:"image"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+func (s *Server) loadJobMeta(id string) (jobMeta, bool) {
+	b, err := os.ReadFile(filepath.Join(s.cfg.JobsDir, id+".meta.json"))
+	if err != nil {
+		return jobMeta{}, false
+	}
+	var m jobMeta
+	if err := json.Unmarshal(b, &m); err != nil {
+		return jobMeta{}, false
+	}
+	return m, true
 }
 
 func (s *Server) waitJobRunning(ctx context.Context, jobID string, timeout time.Duration) error {
@@ -584,14 +774,32 @@ type nomadJob struct {
 	ID         string `json:"ID"`
 	Type       string `json:"Type"`
 	Status     string `json:"Status"`
-	ModifyTime int64  `json:"ModifyIndex"`
+	Periodic   bool   `json:"Periodic"`
+	ParentID   string `json:"ParentID"`
 	JobSummary struct {
 		Summary map[string]struct {
-			Running  int `json:"Running"`
-			Starting int `json:"Starting"`
-			Failed   int `json:"Failed"`
+			Running, Starting, Failed, Complete int
 		} `json:"Summary"`
 	} `json:"JobSummary"`
+}
+
+func formFromNomadJob(j nomadJob, hasTraefik bool) string {
+	switch j.Type {
+	case "batch":
+		if j.Periodic {
+			return "cronjob"
+		}
+		return "job"
+	case "service":
+		// Without metadata we cannot definitively tell daemon from web-service.
+		// Default to web-service because:
+		//   1. Most service-type Nomad jobs in this platform are routed via Traefik.
+		//   2. New deploys always write a meta file with the correct form.
+		//   3. The Replicas count and URL probe in the client clearly show
+		//      whether routing actually works.
+		return "web-service"
+	}
+	return j.Type
 }
 
 func (s *Server) listApps(ctx context.Context) ([]api.AppSummary, error) {
@@ -604,29 +812,61 @@ func (s *Server) listApps(ctx context.Context) ([]api.AppSummary, error) {
 		return nil, fmt.Errorf("parse jobs: %w", err)
 	}
 	hidden := map[string]struct{}{
-		"edge-traefik": {},
-		"blobd-edge":   {},
-		"registry":     {},
+		"edge-traefik": {}, "blobd-edge": {}, "registry": {},
 	}
 	var apps []api.AppSummary
 	for _, j := range jobs {
 		if _, hide := hidden[j.ID]; hide {
 			continue
 		}
+		// Periodic batch instances: skip — the parent cronjob is shown instead.
+		if j.ParentID != "" {
+			continue
+		}
 		running := 0
 		for _, g := range j.JobSummary.Summary {
 			running += g.Running
 		}
+		appName, env := splitJobID(j.ID)
+		domain := appName + "." + s.cfg.BaseDomain
+		if env != "" {
+			domain = j.ID + "." + s.cfg.BaseDomain
+		}
+		form := ""
+		var image string
+		if meta, ok := s.loadJobMeta(j.ID); ok {
+			form = meta.Form
+			image = meta.Image
+			if meta.Domain != "" {
+				domain = meta.Domain
+			}
+		}
+		if form == "" {
+			form = formFromNomadJob(j, false)
+		}
+		url := ""
+		if form == "web-service" {
+			url = "https://" + domain
+		}
 		apps = append(apps, api.AppSummary{
-			App:      j.ID,
-			Domain:   j.ID + "." + s.cfg.BaseDomain,
-			URL:      "https://" + j.ID + "." + s.cfg.BaseDomain,
-			Status:   j.Status,
-			Form:     "web-service",
-			Replicas: running,
+			App:         j.ID,
+			Environment: env,
+			Domain:      domain,
+			Image:       image,
+			URL:         url,
+			Status:      j.Status,
+			Form:        form,
+			Replicas:    running,
 		})
 	}
 	return apps, nil
+}
+
+func splitJobID(id string) (app, env string) {
+	if i := strings.Index(id, "-env-"); i >= 0 {
+		return id[:i], id[i+len("-env-"):]
+	}
+	return id, ""
 }
 
 func (s *Server) appStatus(ctx context.Context, app string) (*api.StatusResponse, error) {
@@ -635,24 +875,46 @@ func (s *Server) appStatus(ctx context.Context, app string) (*api.StatusResponse
 		return nil, errors.New("no such app")
 	}
 	var job struct {
-		ID, Status string
+		ID, Status, Type string
+		Periodic         *struct{} `json:"Periodic,omitempty"`
 	}
 	_ = json.Unmarshal(body, &job)
+	form := ""
+	var domain, image string
+	if meta, ok := s.loadJobMeta(app); ok {
+		form = meta.Form
+		domain = meta.Domain
+		image = meta.Image
+	}
+	if form == "" {
+		form = formFromNomadJob(nomadJob{Type: job.Type, Periodic: job.Periodic != nil}, false)
+	}
+	if domain == "" {
+		appName, env := splitJobID(app)
+		if env != "" {
+			domain = app + "." + s.cfg.BaseDomain
+		} else {
+			domain = appName + "." + s.cfg.BaseDomain
+		}
+	}
+	url := ""
+	if form == "web-service" {
+		url = "https://" + domain
+	}
 	resp := &api.StatusResponse{
 		AppSummary: api.AppSummary{
 			App:    app,
-			Domain: app + "." + s.cfg.BaseDomain,
-			URL:    "https://" + app + "." + s.cfg.BaseDomain,
-			Form:   "web-service",
+			Domain: domain,
+			URL:    url,
+			Image:  image,
+			Form:   form,
 			Status: job.Status,
 		},
 	}
 	allocBody, err := s.nomadGET(ctx, "/v1/job/"+app+"/allocations")
 	if err == nil {
 		var allocs []struct {
-			ID           string `json:"ID"`
-			NodeID       string `json:"NodeID"`
-			ClientStatus string `json:"ClientStatus"`
+			ID, NodeID, ClientStatus string
 		}
 		_ = json.Unmarshal(allocBody, &allocs)
 		running := 0
@@ -676,8 +938,7 @@ func (s *Server) appLogs(ctx context.Context, app string, n int) ([]string, erro
 		return nil, err
 	}
 	var allocs []struct {
-		ID           string `json:"ID"`
-		ClientStatus string `json:"ClientStatus"`
+		ID, ClientStatus string
 	}
 	if err := json.Unmarshal(body, &allocs); err != nil {
 		return nil, err
@@ -699,8 +960,199 @@ func (s *Server) destroyApp(ctx context.Context, app string) error {
 	}
 	jobPath := filepath.Join(s.cfg.JobsDir, app+".nomad")
 	_ = os.Remove(jobPath)
+	_ = os.Remove(filepath.Join(s.cfg.JobsDir, app+".meta.json"))
 	_ = os.RemoveAll(filepath.Join(s.cfg.SourcesDir, app))
 	return nil
+}
+
+func (s *Server) scaleApp(ctx context.Context, app string, replicas int) error {
+	// Use Nomad's scaling API; for now we use the CLI which is stable.
+	return s.run(ctx, "nomad", "job", "scale", app, strconv.Itoa(replicas))
+}
+
+// --- secrets handlers --------------------------------------------------------
+
+func (s *Server) handleSecrets(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		env := r.URL.Query().Get("environment")
+		if env == "" {
+			env = "prod"
+		}
+		metas, err := s.secrets.List(env)
+		if err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		out := api.ListSecretsResponse{}
+		for _, m := range metas {
+			out.Secrets = append(out.Secrets, api.Secret{Name: m.Name, Environment: m.Env, UpdatedAt: m.UpdatedAt, Length: m.Length})
+		}
+		writeJSON(w, 200, out)
+	case "POST":
+		var req api.SetSecretRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(w, 400, err.Error())
+			return
+		}
+		if !validName(req.Name) {
+			writeErr(w, 400, "invalid secret name")
+			return
+		}
+		if !validEnv(req.Environment) {
+			writeErr(w, 400, "invalid environment")
+			return
+		}
+		if err := s.secrets.Set(req.Environment, req.Name, req.Value); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		writeJSON(w, 200, map[string]any{"name": req.Name, "environment": req.Environment, "ok": true})
+	default:
+		writeErr(w, 405, "method not allowed")
+	}
+}
+
+func (s *Server) handleSecretItem(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimPrefix(r.URL.Path, "/v1/secrets/")
+	if !validName(name) {
+		writeErr(w, 400, "invalid name")
+		return
+	}
+	env := r.URL.Query().Get("environment")
+	if !validEnv(env) {
+		writeErr(w, 400, "invalid environment")
+		return
+	}
+	switch r.Method {
+	case "DELETE":
+		if err := s.secrets.Delete(env, name); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		writeJSON(w, 200, map[string]any{"name": name, "environment": env, "deleted": true})
+	default:
+		writeErr(w, 405, "method not allowed")
+	}
+}
+
+// --- doctor ------------------------------------------------------------------
+
+func (s *Server) handleDoctor(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		writeErr(w, 405, "method not allowed")
+		return
+	}
+	out := s.runDoctor(r.Context())
+	writeJSON(w, 200, out)
+}
+
+func (s *Server) runDoctor(ctx context.Context) api.DoctorResponse {
+	resp := api.DoctorResponse{}
+	add := func(sev, cat, app, title, detail, fix string) {
+		resp.Issues = append(resp.Issues, api.DoctorIssue{Severity: sev, Category: cat, App: app, Title: title, Detail: detail, Remediate: fix})
+	}
+
+	// 1. registry credentials readable?
+	resp.Checked++
+	if _, _, err := s.readRegistryCreds(); err != nil {
+		add("P1", "registry", "", "registry credentials unreadable", err.Error(),
+			fmt.Sprintf("Ensure %s is owned by the blobd user and contains username:/password: lines", s.cfg.RegistryCreds))
+	}
+
+	// 2. Nomad reachable?
+	resp.Checked++
+	if _, err := s.nomadGET(ctx, "/v1/agent/self"); err != nil {
+		add("P1", "nomad", "", "Nomad API unreachable", err.Error(),
+			"Ensure Nomad is running and NomadAddr is correct")
+	}
+
+	// 3. job statuses (skip periodic instances — they exit dead by design)
+	resp.Checked++
+	if body, err := s.nomadGET(ctx, "/v1/jobs"); err == nil {
+		var jobs []nomadJob
+		if json.Unmarshal(body, &jobs) == nil {
+			hidden := map[string]struct{}{"edge-traefik": {}, "blobd-edge": {}, "registry": {}}
+			for _, j := range jobs {
+				if _, h := hidden[j.ID]; h {
+					continue
+				}
+				if j.ParentID != "" {
+					continue
+				}
+				if j.Status == "dead" {
+					// A non-periodic batch job that has run to completion is fine.
+					if j.Type == "batch" {
+						continue
+					}
+					add("P1", "nomad", j.ID, "job is dead", "",
+						fmt.Sprintf("`blob logs %s -n 200` to inspect failure, then `blob deploy` to redeploy or `blob destroy %s`", j.ID, j.ID))
+				} else if j.Status == "pending" {
+					add("P2", "nomad", j.ID, "job is pending placement", "", "Check fleet capacity and node eligibility")
+				}
+			}
+		}
+	}
+
+	// 4. orphan job files (no matching Nomad job)
+	resp.Checked++
+	if entries, err := os.ReadDir(s.cfg.JobsDir); err == nil {
+		running := map[string]bool{}
+		if body, err := s.nomadGET(ctx, "/v1/jobs"); err == nil {
+			var jobs []nomadJob
+			_ = json.Unmarshal(body, &jobs)
+			for _, j := range jobs {
+				running[j.ID] = true
+			}
+		}
+		for _, e := range entries {
+			if !strings.HasSuffix(e.Name(), ".nomad") {
+				continue
+			}
+			id := strings.TrimSuffix(e.Name(), ".nomad")
+			if !running[id] {
+				add("P3", "drift", id, "stale job file on disk", filepath.Join(s.cfg.JobsDir, e.Name()),
+					"Run `blob destroy "+id+"` if no longer wanted; otherwise re-deploy")
+			}
+		}
+	}
+
+	// 5. orphan source dirs — a source belongs to any deployed job whose
+	// source-app prefix matches. App deploys land as <app>-<component>, so
+	// the source dir is "blob-app" and jobs are "blob-app-web", "blob-app-worker".
+	resp.Checked++
+	if entries, err := os.ReadDir(s.cfg.SourcesDir); err == nil {
+		var jobIDs []string
+		if body, err := s.nomadGET(ctx, "/v1/jobs"); err == nil {
+			var jobs []nomadJob
+			_ = json.Unmarshal(body, &jobs)
+			for _, j := range jobs {
+				if j.ParentID != "" {
+					continue
+				}
+				jobIDs = append(jobIDs, j.ID)
+			}
+		}
+		hasUser := func(srcName string) bool {
+			for _, id := range jobIDs {
+				if id == srcName || strings.HasPrefix(id, srcName+"-") || strings.HasPrefix(id, srcName+"-env-") {
+					return true
+				}
+			}
+			return false
+		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			if !hasUser(e.Name()) {
+				add("info", "drift", e.Name(), "uploaded source for non-existent app",
+					filepath.Join(s.cfg.SourcesDir, e.Name()), "Safe to delete; will be re-uploaded on next deploy")
+			}
+		}
+	}
+
+	return resp
 }
 
 // --- exec helpers -------------------------------------------------------------

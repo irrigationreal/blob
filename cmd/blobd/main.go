@@ -40,15 +40,19 @@ func main() {
 	cfg.StateDir = *stateDir
 	cfg.JobsDir = *stateDir + "/jobs"
 	cfg.SourcesDir = *stateDir + "/sources"
+	cfg.SecretsDir = *stateDir + "/secrets"
 	cfg.RegistryCreds = *creds
 
-	for _, d := range []string{cfg.StateDir, cfg.JobsDir, cfg.SourcesDir} {
+	for _, d := range []string{cfg.StateDir, cfg.JobsDir, cfg.SourcesDir, cfg.SecretsDir} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			log.Fatalf("mkdir %s: %v", d, err)
 		}
 	}
 
-	srv := server.New(cfg)
+	srv, err := server.New(cfg)
+	if err != nil {
+		log.Fatalf("server init: %v", err)
+	}
 	hs := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           srv.Routes(),

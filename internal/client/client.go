@@ -142,3 +142,47 @@ func (c *Client) Logs(ctx context.Context, app string, lines int) (*api.LogsResp
 func (c *Client) Destroy(ctx context.Context, app string) error {
 	return c.do(ctx, "DELETE", "/v1/apps/"+url.PathEscape(app), nil, nil)
 }
+
+func (c *Client) Scale(ctx context.Context, app string, replicas int) error {
+	return c.do(ctx, "POST", "/v1/apps/"+url.PathEscape(app)+"/scale", &api.ScaleRequest{Replicas: replicas}, nil)
+}
+
+func (c *Client) DeployApp(ctx context.Context, req *api.DeployAppRequest) (*api.DeployAppResponse, error) {
+	out := &api.DeployAppResponse{}
+	if err := c.do(ctx, "POST", "/v1/deploy-app", req, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) ListSecrets(ctx context.Context, env string) (*api.ListSecretsResponse, error) {
+	out := &api.ListSecretsResponse{}
+	q := ""
+	if env != "" {
+		q = "?environment=" + url.QueryEscape(env)
+	}
+	if err := c.do(ctx, "GET", "/v1/secrets"+q, nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) SetSecret(ctx context.Context, env, name, value string) error {
+	return c.do(ctx, "POST", "/v1/secrets", &api.SetSecretRequest{Name: name, Environment: env, Value: value}, nil)
+}
+
+func (c *Client) DeleteSecret(ctx context.Context, env, name string) error {
+	q := ""
+	if env != "" {
+		q = "?environment=" + url.QueryEscape(env)
+	}
+	return c.do(ctx, "DELETE", "/v1/secrets/"+url.PathEscape(name)+q, nil, nil)
+}
+
+func (c *Client) Doctor(ctx context.Context) (*api.DoctorResponse, error) {
+	out := &api.DoctorResponse{}
+	if err := c.do(ctx, "GET", "/v1/doctor", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
