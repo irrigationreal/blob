@@ -17,6 +17,7 @@ type DeployRequest struct {
 	Replicas    int               `json:"replicas,omitempty"`
 	Env         map[string]string `json:"env,omitempty"`
 	Secrets     []SecretBinding   `json:"secrets,omitempty"`
+	Services    []string          `json:"services,omitempty"` // names of managed services to bind (e.g. ["my-pg"])
 	Form        string            `json:"form,omitempty"`     // web-service | daemon | job | cronjob | static
 	Schedule    string            `json:"schedule,omitempty"` // cron expression for cronjob
 	Volumes     []VolumeMount     `json:"volumes,omitempty"`
@@ -251,4 +252,35 @@ type ExecRequest struct {
 type ExecResponse struct {
 	Output   string `json:"output"`
 	ExitCode int    `json:"exit_code"`
+}
+
+// Managed services — Postgres (more drivers later)
+type Postgres struct {
+	Name      string    `json:"name"`
+	Version   string    `json:"version"`
+	Database  string    `json:"database"`
+	User      string    `json:"user"`
+	Host      string    `json:"host"`     // public host other workloads connect through
+	Port      int       `json:"port"`     // host static port allocated for this instance
+	JobID     string    `json:"job_id"`
+	URLMasked string    `json:"url"`      // postgres://user:***@host:port/db
+	Status    string    `json:"status"`   // running | pending | dead
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type CreatePostgresRequest struct {
+	Name     string `json:"name"`
+	Version  string `json:"version,omitempty"`  // default 16
+	Database string `json:"database,omitempty"` // default = name
+	CPU      int    `json:"cpu,omitempty"`
+	Memory   int    `json:"memory,omitempty"`
+	Disk     int    `json:"disk,omitempty"` // MiB
+}
+
+type ListPostgresResponse struct {
+	Postgres []Postgres `json:"postgres"`
+}
+
+type PostgresURL struct {
+	URL string `json:"url"` // full postgres://... including password
 }

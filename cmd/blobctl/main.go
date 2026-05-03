@@ -53,11 +53,17 @@ Usage:
 
   blob doctor                                     Run platform self-check
 
+  blob postgres list
+  blob postgres create <name> [--version V] [--database D]
+  blob postgres url <name>                        Print full DATABASE_URL (with password)
+  blob postgres connect <name>                    Open a psql shell using the live DSN
+  blob postgres destroy <name> [--yes]
+
   blob whoami                                     Test connection
   blob version                                    Print version
 `
 
-var version = "0.3.0"
+var version = "0.4.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -103,6 +109,8 @@ func main() {
 		cmdVolumes(args)
 	case "secrets":
 		cmdSecrets(args)
+	case "postgres", "pg":
+		cmdPostgres(args)
 	case "doctor":
 		cmdDoctor()
 	case "whoami":
@@ -254,6 +262,7 @@ func componentToReq(app string, c *manifest.Component, env string) *api.DeployRe
 		Schedule:    c.Schedule,
 		Tag:         c.Image,
 		Command:     c.Command,
+		Services:    c.Services,
 		Root:        c.Root,
 		Build:       c.Build,
 		Index:       c.Index,
@@ -825,4 +834,109 @@ func openURL(u string) {
 	}
 	c := exec.Command(cmd[0], cmd[1:]...)
 	_ = c.Start()
+}
+
+// --- managed services: postgres ---
+
+func cmdPostgres(args []string) {
+	if len(args) == 0 {
+		die("usage: blob postgres <list|create|url|connect|destroy> ...")
+	}
+	c := mustClient()
+	switch args[0] {
+	case "list", "ls":
+		out, err := c.ListPostgres(context.Background())
+		if err != nil {
+			die("%v", err)
+		}
+		if len(out.Postgres) == 0 {
+			fmt.Println("no postgres instances")
+			return
+		}
+		fmt.Printf("%-20s %-7s %-10s %-22s %-7s %s\n", "NAME", "VERSION", "STATUS", "HOST", "PORT", "URL")
+		for _, p := range out.Postgres {
+			fmt.Printf("%-20s %-7s %-10s %-22s %-7d %s\n", p.Name, p.Version, p.Status, p.Host, p.Port, p.URLMasked)
+		}
+	case "create":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob postgres create <name> [--version V] [--database D]")
+		}
+		req := &api.CreatePostgresRequest{
+			Name:     name,
+			Version:  flags["version"],
+			Database: flags["database"],
+		}
+		fmt.Printf("creating postgres %q (this provisions a Nomad job and waits for pg_isready)...\n", name)
+		t0 := time.Now()
+		out, err := c.CreatePostgres(context.Background(), req)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("ready in %s\n", time.Since(t0).Round(100*time.Millisecond))
+		fmt.Printf("  name:      %s\n", out.Name)
+		fmt.Printf("  version:   %s\n", out.Version)
+		fmt.Printf("  host:      %s\n", out.Host)
+		fmt.Printf("  port:      %d\n", out.Port)
+		fmt.Printf("  database:  %s\n", out.Database)
+		fmt.Printf("  user:      %s\n", out.User)
+		fmt.Printf("  url:       %s\n", out.URLMasked)
+		fmt.Println()
+		fmt.Printf("To bind apps, add to blob.yaml:\n  services:\n    - %s\n", out.Name)
+		fmt.Printf("Apps will receive DATABASE_URL, PGHOST, PGPORT, PGUSER, PGPASSWORD, PGDATABASE.\n")
+		fmt.Printf("Get the full DSN with: blob postgres url %s\n", out.Name)
+	case "url":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob postgres url <name>")
+		}
+		url, err := c.PostgresURL(context.Background(), name)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Println(url)
+	case "connect":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob postgres connect <name>")
+		}
+		url, err := c.PostgresURL(context.Background(), name)
+		if err != nil {
+			die("%v", err)
+		}
+		if _, err := exec.LookPath("psql"); err != nil {
+			fmt.Println(url)
+			die("psql not found locally; the DSN is printed above")
+		}
+		cmd := exec.Command("psql", url)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			os.Exit(1)
+		}
+	case "destroy", "rm":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob postgres destroy <name>")
+		}
+		if flags["yes"] != "true" {
+			fmt.Printf("destroy postgres %q? (data on disk is preserved as a Docker volume; type the name to confirm) ", name)
+			var line string
+			fmt.Fscanln(os.Stdin, &line)
+			if line != name {
+				die("aborted")
+			}
+		}
+		if err := c.DestroyPostgres(context.Background(), name); err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("destroyed postgres %q (Docker volume blob-pg-%s preserved)\n", name, name)
+	default:
+		die("unknown postgres subcommand: %s", args[0])
+	}
 }

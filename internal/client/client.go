@@ -245,3 +245,41 @@ func (c *Client) Exec(ctx context.Context, app string, cmd []string) (*api.ExecR
 	}
 	return out, nil
 }
+
+// --- managed services: postgres ---
+
+func (c *Client) ListPostgres(ctx context.Context) (*api.ListPostgresResponse, error) {
+	out := &api.ListPostgresResponse{}
+	if err := c.do(ctx, "GET", "/v1/postgres", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) CreatePostgres(ctx context.Context, req *api.CreatePostgresRequest) (*api.Postgres, error) {
+	out := &api.Postgres{}
+	if err := c.do(ctx, "POST", "/v1/postgres", req, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) GetPostgres(ctx context.Context, name string) (*api.Postgres, error) {
+	out := &api.Postgres{}
+	if err := c.do(ctx, "GET", "/v1/postgres/"+url.PathEscape(name), nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) PostgresURL(ctx context.Context, name string) (string, error) {
+	out := &api.PostgresURL{}
+	if err := c.do(ctx, "GET", "/v1/postgres/"+url.PathEscape(name)+"/url", nil, out); err != nil {
+		return "", err
+	}
+	return out.URL, nil
+}
+
+func (c *Client) DestroyPostgres(ctx context.Context, name string) error {
+	return c.do(ctx, "DELETE", "/v1/postgres/"+url.PathEscape(name), nil, nil)
+}

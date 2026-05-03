@@ -45,6 +45,7 @@ Plus an example with a custom domain attached: <https://static.darv.ai/> (same b
 | Per-component **command override**                             | shipped  |
 | **Secrets**: AES-256-GCM at rest, per-environment, env injection | shipped |
 | **Environments** (`prod`, `staging`, `pr-1234`, …)             | shipped  |
+| **Managed Postgres** with `services:` env injection (`DATABASE_URL`) | shipped  |
 | **Custom domains** with `blob domains attach` (auto-HTTPS)     | shipped  |
 | **Multiple hostnames** per app                                 | shipped  |
 | **Scaling** (`blob scale`)                                     | shipped  |
@@ -76,11 +77,12 @@ The full v1 spec ([`docs/the-blob-spec.md`](docs/the-blob-spec.md)) is the desti
 
 ## Setting up your own Blob
 
-Two short docs:
+Three short docs:
 
 - **[`docs/host-setup.md`](docs/host-setup.md)** — turn a fresh server into a Blob (one shell script + a systemd unit).
 - **[`docs/joining-nodes.md`](docs/joining-nodes.md)** — add another machine to an existing Blob.
 - **[`docs/operator.md`](docs/operator.md)** — day-2 ops: backups, drains, upgrades, recovering from a dead node.
+- **[`docs/managed-services.md`](docs/managed-services.md)** — managed Postgres: create, bind apps via `services:`, get the DSN, destroy.
 
 ## blob.yaml
 
@@ -193,6 +195,12 @@ blob domains attach <app> <host> [--mode MODE]
 blob secrets list [--env ENV]
 blob secrets set <name> [--env ENV] [--from FILE | --value V]
 blob secrets unset <name> [--env ENV]
+
+blob postgres list
+blob postgres create <name> [--version V] [--database D]
+blob postgres url <name>
+blob postgres connect <name>
+blob postgres destroy <name> [--yes]
 
 blob nodes list
 blob nodes drain <id>

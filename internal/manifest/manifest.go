@@ -25,6 +25,7 @@ type Component struct {
 	Replicas    int               `yaml:"replicas,omitempty"` // count
 	Env         map[string]string `yaml:"env,omitempty"`      // literal env vars
 	Secrets     []SecretRef       `yaml:"secrets,omitempty"`  // env vars sourced from the secret store
+	Services    []string          `yaml:"services,omitempty"` // managed services to bind (Postgres etc.); injects DATABASE_URL etc.
 	Schedule    string            `yaml:"schedule,omitempty"` // cron expression for cronjob form
 	Volumes     []VolumeMount     `yaml:"volumes,omitempty"`  // per-app Docker named volumes
 	Sidecars    []Sidecar         `yaml:"sidecars,omitempty"` // additional containers in the same Nomad group (Bundle)

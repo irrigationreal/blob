@@ -94,6 +94,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/v1/nodes/", s.handleNodeItem)
 	mux.HandleFunc("/v1/join", s.handleJoin)
 	mux.HandleFunc("/v1/volumes", s.handleVolumes)
+	mux.HandleFunc("/v1/postgres", s.handlePostgres)
+	mux.HandleFunc("/v1/postgres/", s.handlePostgresItem)
 	return s.withAuth(mux)
 }
 
@@ -516,6 +518,9 @@ func (s *Server) deployFromSource(ctx context.Context, src string, req *api.Depl
 	if err := s.resolveSecrets(req); err != nil {
 		return nil, err
 	}
+	if err := s.resolveServices(req); err != nil {
+		return nil, err
+	}
 
 	if err := s.recordPhase(out, "schedule", func() error {
 		return s.scheduleJob(ctx, req, br.Image, br.Port, domain, id)
@@ -561,6 +566,9 @@ func (s *Server) deployImage(ctx context.Context, req *api.DeployRequest, source
 	}
 	out.Image = image
 	if err := s.resolveSecrets(req); err != nil {
+		return nil, err
+	}
+	if err := s.resolveServices(req); err != nil {
 		return nil, err
 	}
 	if err := s.recordPhase(out, "schedule", func() error {
