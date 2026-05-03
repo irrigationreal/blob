@@ -64,6 +64,8 @@ The same platform host runs these via `blob import compose|procfile|fly` → `bl
 | **Messaging**: managed NATS with JetStream (`services: [<nats>]` injects NATS_URL) | shipped  |
 | **Tracing**: managed Tempo (OTLP gRPC); blobd auto-exports deploy spans when a Tempo is registered; Grafana provisioned with Tempo datasource | shipped  |
 | **Metrics**: managed Prometheus + Nomad service discovery + blobd /metrics; Grafana provisioned with Prometheus datasource | shipped  |
+| **Autoscaling**: per-app horizontal autoscaler (cpu/memory/http_qps/raw PromQL) with min/max + cooldowns; `blob autoscale set <app>` | shipped  |
+| **Service rollup**: `blob services list` shows postgres/valkey/loki/grafana/promtail/nats/tempo/prometheus in one table | shipped  |
 | **Managed Valkey** (Redis-compatible) with `services:` env injection (`REDIS_URL`) | shipped  |
 | **Custom domains** with `blob domains attach` (auto-HTTPS)     | shipped  |
 | **Multiple hostnames** per app                                 | shipped  |
@@ -86,7 +88,6 @@ The full v1 spec ([`docs/the-blob-spec.md`](docs/the-blob-spec.md)) is the desti
 - Kata microVMs, blebs warm pool, hot journal volumes, rewind
 - Resource graph + manifest projection-hash drift detection
 - **Tempo/Prometheus**: shipped in v0.10 — see managed services above
-- **Autoscaling** beyond explicit `blob scale`
 - **Multi-region** active-passive failover
 - **Preview environments** auto-created from CI webhooks
 - **Status pages**, cost rollups, plugins, web console, GPU/confidential compute

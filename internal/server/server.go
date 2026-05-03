@@ -71,7 +71,8 @@ func DefaultConfig() Config {
 type Server struct {
 	cfg       Config
 	secrets   *secrets.Store
-	scheduler *Scheduler
+	scheduler  *Scheduler
+	autoscaler *autoscaler
 	mu        sync.Mutex
 }
 
@@ -83,6 +84,8 @@ func New(cfg Config) (*Server, error) {
 	s := &Server{cfg: cfg, secrets: store}
 	s.scheduler = newScheduler(s)
 	s.scheduler.Start()
+	s.autoscaler = newAutoscaler(s)
+	s.autoscaler.Start()
 	s.initTracing()
 	return s, nil
 }
@@ -91,6 +94,9 @@ func New(cfg Config) (*Server, error) {
 func (s *Server) Close() {
 	if s.scheduler != nil {
 		s.scheduler.Stop()
+	}
+	if s.autoscaler != nil {
+		s.autoscaler.Stop()
 	}
 }
 
@@ -136,6 +142,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/v1/tempo/", s.handleTempoItem)
 	mux.HandleFunc("/v1/prometheus", s.handlePrometheus)
 	mux.HandleFunc("/v1/prometheus/", s.handlePrometheusItem)
+	mux.HandleFunc("/v1/autoscale", s.handleAutoscale)
+	mux.HandleFunc("/v1/autoscale/", s.handleAutoscaleItem)
+	mux.HandleFunc("/v1/services", s.handleServices)
 	mux.Handle("/metrics", promhttp.Handler())
 	return s.withAuth(mux)
 }

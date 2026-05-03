@@ -164,7 +164,7 @@ func (s *Server) createPrometheus(ctx context.Context, req *api.CreatePrometheus
 		return nil, err
 	}
 	id := "prometheus-" + m.Name
-	hcl := renderPrometheusJob(m, s.cfg.Datacenter, id, req.CPU, req.Memory, s.postgresHost())
+	hcl := renderPrometheusJob(m, s.cfg.Datacenter, id, req.CPU, req.Memory, s.postgresHost(), s.nomadRegion(ctx))
 	if err := os.MkdirAll(s.cfg.JobsDir, 0o755); err != nil {
 		return nil, err
 	}
@@ -253,4 +253,26 @@ func (s *Server) lookupPrometheusForBinding(name string, env map[string]string, 
 	prefix := strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
 	env[prefix+"_URL"] = url
 	return true
+}
+
+// nomadRegion fetches the Nomad agent's configured region; falls back to
+// "global" if the query fails. Used when rendering Prometheus
+// nomad_sd_configs (Nomad SD requires a matching region).
+func (s *Server) nomadRegion(ctx context.Context) string {
+	body, err := s.nomadGET(ctx, "/v1/agent/self")
+	if err != nil {
+		return "global"
+	}
+	var r struct {
+		Config struct {
+			Region string
+		}
+	}
+	if err := json.Unmarshal(body, &r); err != nil {
+		return "global"
+	}
+	if r.Config.Region == "" {
+		return "global"
+	}
+	return r.Config.Region
 }

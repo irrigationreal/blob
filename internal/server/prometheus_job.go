@@ -13,7 +13,7 @@ import "fmt"
 // hostIP is the platform host's reachable IP (the same one used for
 // postgres/valkey URL synthesis). We use it for the static targets so the
 // container-side scraper reaches services via the host's NAT bridge.
-func renderPrometheusJob(m *prometheusMeta, dc, id string, cpu, memory int, hostIP string) string {
+func renderPrometheusJob(m *prometheusMeta, dc, id string, cpu, memory int, hostIP, region string) string {
 	volume := "blob-prometheus-" + m.Name
 	return fmt.Sprintf(`job %q {
   datacenters = [%q]
@@ -108,9 +108,17 @@ scrape_configs:
   # each one. Workloads that don't expose /metrics return 404 and show as
   # 'up == 0' which is fine — that's how operators discover unmonitored
   # apps.
+  - job_name: cadvisor
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['172.17.0.1:18080']
+        labels:
+          service: cadvisor
+
   - job_name: nomad-services
     nomad_sd_configs:
       - server: 'http://172.17.0.1:4646'
+        region: '%s'
     relabel_configs:
       - source_labels: [__meta_nomad_service]
         target_label: service
@@ -129,5 +137,6 @@ EOH
 		volume,
 		cpu, memory,
 		hostIP,
+		region,
 	)
 }

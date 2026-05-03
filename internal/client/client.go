@@ -595,3 +595,43 @@ func (c *Client) GetPrometheus(ctx context.Context, name string) (*api.Prometheu
 func (c *Client) DestroyPrometheus(ctx context.Context, name string) error {
 	return c.do(ctx, "DELETE", "/v1/prometheus/"+url.PathEscape(name), nil, nil)
 }
+
+// --- Autoscale (v0.11) ---
+
+func (c *Client) ListAutoscale(ctx context.Context) (*api.ListAutoscaleResponse, error) {
+	out := &api.ListAutoscaleResponse{}
+	if err := c.do(ctx, "GET", "/v1/autoscale", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) GetAutoscale(ctx context.Context, app string) (*api.AutoscaleConfig, error) {
+	out := &api.AutoscaleConfig{}
+	if err := c.do(ctx, "GET", "/v1/autoscale/"+url.PathEscape(app), nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) SetAutoscale(ctx context.Context, app string, cfg *api.AutoscaleConfig) (*api.AutoscaleConfig, error) {
+	out := &api.AutoscaleConfig{}
+	if err := c.do(ctx, "PUT", "/v1/autoscale/"+url.PathEscape(app), cfg, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) UnsetAutoscale(ctx context.Context, app string) error {
+	return c.do(ctx, "DELETE", "/v1/autoscale/"+url.PathEscape(app), nil, nil)
+}
+
+// --- Services rollup (v0.11) ---
+
+func (c *Client) ListServices(ctx context.Context) (*api.ListServicesResponse, error) {
+	out := &api.ListServicesResponse{}
+	if err := c.do(ctx, "GET", "/v1/services", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}

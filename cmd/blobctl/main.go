@@ -108,11 +108,19 @@ Usage:
   blob prometheus url <name>
   blob prometheus destroy <name> [--yes]
 
+  blob services list                              Roll-up of every managed-service kind
+
+  blob autoscale list
+  blob autoscale set <app> --min N --max M --metric cpu|memory|http_qps --target P
+                                                  [--cooldown-up 60s] [--cooldown-down 180s]
+  blob autoscale get <app>
+  blob autoscale unset <app>
+
   blob whoami                                     Test connection
   blob version                                    Print version
 `
 
-var version = "0.10.0"
+var version = "0.11.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -176,6 +184,10 @@ func main() {
 		cmdTempo(args)
 	case "prometheus":
 		cmdPrometheus(args)
+	case "autoscale":
+		cmdAutoscale(args)
+	case "services":
+		cmdServices(args)
 	case "doctor":
 		cmdDoctor()
 	case "whoami":
@@ -1816,6 +1828,135 @@ func cmdPrometheus(args []string) {
 		fmt.Printf("destroyed prometheus %q\n", name)
 	default:
 		die("unknown prometheus subcommand: %s", args[0])
+	}
+}
+
+// --- autoscale (v0.11) ---
+
+func cmdAutoscale(args []string) {
+	if len(args) == 0 {
+		die("usage: blob autoscale <list|get|set|unset> ...")
+	}
+	c := mustClient()
+	switch args[0] {
+	case "list", "ls":
+		out, err := c.ListAutoscale(context.Background())
+		if err != nil {
+			die("%v", err)
+		}
+		if len(out.Autoscale) == 0 {
+			fmt.Println("no autoscale configs")
+			return
+		}
+		fmt.Printf("%-22s %-9s %-7s %-7s %-12s %-7s %s\n", "APP", "ENABLED", "MIN", "MAX", "METRIC", "TARGET", "COOLDOWN(up/down)")
+		for _, c := range out.Autoscale {
+			fmt.Printf("%-22s %-9t %-7d %-7d %-12s %-7.2f %s/%s\n",
+				c.App, c.Enabled, c.Min, c.Max, c.Metric, c.Target,
+				c.CooldownUp, c.CooldownDown)
+		}
+	case "get":
+		flags := parseFlags(args[1:])
+		app := positional(flags, 0)
+		if app == "" {
+			die("usage: blob autoscale get <app>")
+		}
+		cfg, err := c.GetAutoscale(context.Background(), app)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("app:           %s\nenabled:       %t\nmin:           %d\nmax:           %d\nmetric:        %s\ntarget:        %.2f\ncooldown_up:   %s\ncooldown_down: %s\n",
+			cfg.App, cfg.Enabled, cfg.Min, cfg.Max, cfg.Metric, cfg.Target, cfg.CooldownUp, cfg.CooldownDown)
+	case "set":
+		flags := parseFlags(args[1:])
+		app := positional(flags, 0)
+		if app == "" {
+			die("usage: blob autoscale set <app> --min N --max M --metric cpu|memory|http_qps --target P [--cooldown-up 60s] [--cooldown-down 180s]")
+		}
+		min := atoi(flags["min"])
+		max := atoi(flags["max"])
+		metric := flags["metric"]
+		if metric == "" {
+			metric = "cpu"
+		}
+		var target float64
+		if t := flags["target"]; t != "" {
+			t = strings.TrimSuffix(t, "%")
+			fmt.Sscanf(t, "%f", &target)
+		}
+		cu := parseDurOrDefault(flags["cooldown-up"], 60*time.Second)
+		cd := parseDurOrDefault(flags["cooldown-down"], 180*time.Second)
+		if max == 0 {
+			die("--max is required (>0)")
+		}
+		if target <= 0 {
+			die("--target is required (>0)")
+		}
+		out, err := c.SetAutoscale(context.Background(), app, &api.AutoscaleConfig{
+			App: app, Enabled: true,
+			Min: min, Max: max,
+			Metric: metric, Target: target,
+			CooldownUp: cu, CooldownDown: cd,
+		})
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("autoscale set: %s metric=%s target=%.2f range=%d..%d cooldown=%s/%s\n",
+			out.App, out.Metric, out.Target, out.Min, out.Max, out.CooldownUp, out.CooldownDown)
+	case "unset", "rm":
+		flags := parseFlags(args[1:])
+		app := positional(flags, 0)
+		if app == "" {
+			die("usage: blob autoscale unset <app>")
+		}
+		if err := c.UnsetAutoscale(context.Background(), app); err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("autoscale removed for %s\n", app)
+	default:
+		die("unknown autoscale subcommand: %s", args[0])
+	}
+}
+
+func parseDurOrDefault(s string, def time.Duration) time.Duration {
+	if s == "" {
+		return def
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		die("invalid duration %q: %v", s, err)
+	}
+	return d
+}
+
+// --- services rollup (v0.11) ---
+
+func cmdServices(args []string) {
+	if len(args) > 0 && args[0] != "list" && args[0] != "ls" {
+		die("usage: blob services list")
+	}
+	c := mustClient()
+	out, err := c.ListServices(context.Background())
+	if err != nil {
+		die("%v", err)
+	}
+	if len(out.Services) == 0 {
+		fmt.Println("no managed services registered")
+		return
+	}
+	fmt.Printf("%-12s %-22s %-10s %-22s %-15s %s\n", "KIND", "NAME", "STATUS", "HOST", "PORTS", "URL")
+	for _, s := range out.Services {
+		ports := ""
+		for i, p := range s.Ports {
+			if i > 0 {
+				ports += ","
+			}
+			ports += fmt.Sprintf("%d", p)
+		}
+		urlOut := ""
+		if len(s.URLs) > 0 {
+			urlOut = s.URLs[0]
+		}
+		fmt.Printf("%-12s %-22s %-10s %-22s %-15s %s\n", s.Kind, s.Name, s.Status, s.Host, ports, urlOut)
 	}
 }
 

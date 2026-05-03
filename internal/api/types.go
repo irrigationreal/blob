@@ -544,3 +544,34 @@ type CreatePrometheusRequest struct {
 type ListPrometheusResponse struct {
 	Prometheus []Prometheus `json:"prometheus"`
 }
+
+// Autoscale (v0.11) — per-app horizontal autoscaler config.
+type AutoscaleConfig struct {
+	App          string        `json:"app"`
+	Enabled      bool          `json:"enabled"`
+	Min          int           `json:"min"`
+	Max          int           `json:"max"`
+	Metric       string        `json:"metric"`        // "cpu" | "memory" | "http_qps" | raw PromQL
+	Target       float64       `json:"target"`        // metric value at which we want to be at the current scale
+	CooldownUp   time.Duration `json:"cooldown_up"`   // min interval between scale-ups (Go duration)
+	CooldownDown time.Duration `json:"cooldown_down"` // min interval between scale-downs
+}
+
+type ListAutoscaleResponse struct {
+	Autoscale []AutoscaleConfig `json:"autoscale"`
+}
+
+// Services rollup (v0.11) — single endpoint that fans out to every
+// managed-service registry.
+type ServiceSummary struct {
+	Kind   string   `json:"kind"`   // postgres | valkey | loki | grafana | promtail | nats | tempo | prometheus
+	Name   string   `json:"name"`
+	Status string   `json:"status"`
+	Host   string   `json:"host,omitempty"`
+	Ports  []int    `json:"ports,omitempty"`
+	URLs   []string `json:"urls,omitempty"`
+}
+
+type ListServicesResponse struct {
+	Services []ServiceSummary `json:"services"`
+}
