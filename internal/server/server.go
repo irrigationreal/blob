@@ -26,6 +26,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/otel/attribute"
 	"sync"
 	"time"
 
@@ -80,6 +83,7 @@ func New(cfg Config) (*Server, error) {
 	s := &Server{cfg: cfg, secrets: store}
 	s.scheduler = newScheduler(s)
 	s.scheduler.Start()
+	s.initTracing()
 	return s, nil
 }
 
@@ -126,12 +130,19 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/v1/grafana/", s.handleGrafanaItem)
 	mux.HandleFunc("/v1/promtail", s.handlePromtail)
 	mux.HandleFunc("/v1/promtail/", s.handlePromtailItem)
+	mux.HandleFunc("/v1/nats", s.handleNATS)
+	mux.HandleFunc("/v1/nats/", s.handleNATSItem)
+	mux.HandleFunc("/v1/tempo", s.handleTempo)
+	mux.HandleFunc("/v1/tempo/", s.handleTempoItem)
+	mux.HandleFunc("/v1/prometheus", s.handlePrometheus)
+	mux.HandleFunc("/v1/prometheus/", s.handlePrometheusItem)
+	mux.Handle("/metrics", promhttp.Handler())
 	return s.withAuth(mux)
 }
 
 func (s *Server) withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" {
+		if r.URL.Path == "/healthz" || r.URL.Path == "/metrics" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -285,11 +296,26 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "no source uploaded for "+req.App)
 		return
 	}
-	out, err := s.deployFromSource(r.Context(), src, &req, req.App)
+	ctx, finish := s.TraceAction(r.Context(), "deploy.source",
+		attribute.String("app", req.App),
+		attribute.String("form", req.Form),
+		attribute.String("env", req.Environment),
+	)
+	t0 := time.Now()
+	out, err := s.deployFromSource(ctx, src, &req, req.App)
+	form := req.Form
+	if form == "" {
+		form = "web-service"
+	}
+	deployDuration.WithLabelValues(form).Observe(time.Since(t0).Seconds())
 	if err != nil {
+		deployTotal.WithLabelValues(form, "error").Inc()
+		finish(err)
 		writeErr(w, 500, err.Error())
 		return
 	}
+	deployTotal.WithLabelValues(form, "ok").Inc()
+	finish(nil)
 	writeJSON(w, 200, out)
 }
 
@@ -321,11 +347,26 @@ func (s *Server) handleDeployImage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	out, err := s.deployImage(r.Context(), &req, req.App)
+	ctx, finish := s.TraceAction(r.Context(), "deploy.image",
+		attribute.String("app", req.App),
+		attribute.String("form", req.Form),
+		attribute.String("image", req.Tag),
+	)
+	t0 := time.Now()
+	out, err := s.deployImage(ctx, &req, req.App)
+	form := req.Form
+	if form == "" {
+		form = "web-service"
+	}
+	deployDuration.WithLabelValues(form).Observe(time.Since(t0).Seconds())
 	if err != nil {
+		deployTotal.WithLabelValues(form, "error").Inc()
+		finish(err)
 		writeErr(w, 500, err.Error())
 		return
 	}
+	deployTotal.WithLabelValues(form, "ok").Inc()
+	finish(nil)
 	writeJSON(w, 200, out)
 }
 

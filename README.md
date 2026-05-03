@@ -61,6 +61,9 @@ The same platform host runs these via `blob import compose|procfile|fly` → `bl
 | **Off-host backup shipping** to S3-compatible stores + scheduled cron + retention | shipped  |
 | **Observability**: managed Loki + Grafana + Promtail; `blob logs --since/--grep/--follow` queries Loki when registered, falls back to nomad alloc tail | shipped  |
 | **Importers**: `blob import compose|procfile|fly` translate third-party manifests to blob.yaml; `blob deploy --from <kind> <path>` does both in one shot | shipped  |
+| **Messaging**: managed NATS with JetStream (`services: [<nats>]` injects NATS_URL) | shipped  |
+| **Tracing**: managed Tempo (OTLP gRPC); blobd auto-exports deploy spans when a Tempo is registered; Grafana provisioned with Tempo datasource | shipped  |
+| **Metrics**: managed Prometheus + Nomad service discovery + blobd /metrics; Grafana provisioned with Prometheus datasource | shipped  |
 | **Managed Valkey** (Redis-compatible) with `services:` env injection (`REDIS_URL`) | shipped  |
 | **Custom domains** with `blob domains attach` (auto-HTTPS)     | shipped  |
 | **Multiple hostnames** per app                                 | shipped  |
@@ -82,7 +85,7 @@ The full v1 spec ([`docs/the-blob-spec.md`](docs/the-blob-spec.md)) is the desti
 
 - Kata microVMs, blebs warm pool, hot journal volumes, rewind
 - Resource graph + manifest projection-hash drift detection
-- **Tempo/Prometheus** for traces + metrics (Loki for logs is shipped — see above)
+- **Tempo/Prometheus**: shipped in v0.10 — see managed services above
 - **Autoscaling** beyond explicit `blob scale`
 - **Multi-region** active-passive failover
 - **Preview environments** auto-created from CI webhooks

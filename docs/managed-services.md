@@ -422,3 +422,23 @@ sudo ufw allow 13000:13100/tcp comment "blob-observability"
 ### Recursive dogfood (v0.8 ship verification)
 
 Sentinel `V08-XYZ-1777844181` was hit against `compose-hello.irrigate.cc` from the platform host; 30 s later `blob logs compose-hello --since 5m` returned the matching nginx access-log line with the `Source: loki` field set. `--grep "V08-XYZ"` returned only the matching lines. Loki resident memory: 85 MiB / 512 MiB cap.
+
+## NATS (v0.10): managed messaging
+
+Single-node NATS with JetStream enabled. One instance per cluster is the expected shape.
+
+```sh
+blob nats create platform-nats
+# Apps bind via:
+#   services:
+#     - platform-nats
+# and receive NATS_URL in their environment.
+```
+
+`platform-nats` listens on `nats://<host>:14222` by default (port pool 14222–14322 for additional instances). UFW: open `14222:14322/tcp` from the docker bridge.
+
+JetStream data persists on the Docker named volume `blob-nats-<name>` mounted at `/data` inside the container. `blob destroy` keeps the volume so you can resurrect — same semantics as postgres/valkey.
+
+### Verified pub/sub round-trip
+
+The `~/code/blob-dogfood/blob-nats-demo/` app deploys with `services: [platform-nats]`, receives `NATS_URL`, subscribes to `blob.demo.>`, and publishes a tick every 5s. `curl https://blob-nats-demo.irrigate.cc/` returns `{"received":N,"lastReceived":"tick-<ms>"}` confirming the pub→sub round-trip lands in the same NATS instance.

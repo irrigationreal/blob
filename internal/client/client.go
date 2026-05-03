@@ -505,3 +505,93 @@ func (c *Client) CreatePromtail(ctx context.Context, req *api.CreatePromtailRequ
 func (c *Client) DestroyPromtail(ctx context.Context, name string) error {
 	return c.do(ctx, "DELETE", "/v1/promtail/"+url.PathEscape(name), nil, nil)
 }
+
+// --- NATS ---
+
+func (c *Client) ListNATS(ctx context.Context) (*api.ListNATSResponse, error) {
+	out := &api.ListNATSResponse{}
+	if err := c.do(ctx, "GET", "/v1/nats", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) CreateNATS(ctx context.Context, req *api.CreateNATSRequest) (*api.NATS, error) {
+	out := &api.NATS{}
+	if err := c.do(ctx, "POST", "/v1/nats", req, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) GetNATS(ctx context.Context, name string) (*api.NATS, error) {
+	out := &api.NATS{}
+	if err := c.do(ctx, "GET", "/v1/nats/"+url.PathEscape(name), nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) DestroyNATS(ctx context.Context, name string) error {
+	return c.do(ctx, "DELETE", "/v1/nats/"+url.PathEscape(name), nil, nil)
+}
+
+// --- Tempo ---
+
+func (c *Client) ListTempo(ctx context.Context) (*api.ListTempoResponse, error) {
+	out := &api.ListTempoResponse{}
+	if err := c.do(ctx, "GET", "/v1/tempo", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) CreateTempo(ctx context.Context, req *api.CreateTempoRequest) (*api.Tempo, error) {
+	out := &api.Tempo{}
+	if err := c.do(ctx, "POST", "/v1/tempo", req, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) GetTempo(ctx context.Context, name string) (*api.Tempo, error) {
+	out := &api.Tempo{}
+	if err := c.do(ctx, "GET", "/v1/tempo/"+url.PathEscape(name), nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) DestroyTempo(ctx context.Context, name string) error {
+	return c.do(ctx, "DELETE", "/v1/tempo/"+url.PathEscape(name), nil, nil)
+}
+
+// --- Prometheus ---
+
+func (c *Client) ListPrometheus(ctx context.Context) (*api.ListPrometheusResponse, error) {
+	out := &api.ListPrometheusResponse{}
+	if err := c.do(ctx, "GET", "/v1/prometheus", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) CreatePrometheus(ctx context.Context, req *api.CreatePrometheusRequest) (*api.Prometheus, error) {
+	out := &api.Prometheus{}
+	if err := c.do(ctx, "POST", "/v1/prometheus", req, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) GetPrometheus(ctx context.Context, name string) (*api.Prometheus, error) {
+	out := &api.Prometheus{}
+	if err := c.do(ctx, "GET", "/v1/prometheus/"+url.PathEscape(name), nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) DestroyPrometheus(ctx context.Context, name string) error {
+	return c.do(ctx, "DELETE", "/v1/prometheus/"+url.PathEscape(name), nil, nil)
+}

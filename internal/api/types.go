@@ -433,11 +433,13 @@ type Grafana struct {
 }
 
 type CreateGrafanaRequest struct {
-	Name         string `json:"name"`
-	Version      string `json:"version,omitempty"` // default 11
-	CPU          int    `json:"cpu,omitempty"`
-	Memory       int    `json:"memory,omitempty"`
-	LokiInstance string `json:"loki_instance,omitempty"` // optional managed-loki name to provision as datasource
+	Name               string `json:"name"`
+	Version            string `json:"version,omitempty"` // default 11
+	CPU                int    `json:"cpu,omitempty"`
+	Memory             int    `json:"memory,omitempty"`
+	LokiInstance       string `json:"loki_instance,omitempty"`       // optional managed-loki name
+	TempoInstance      string `json:"tempo_instance,omitempty"`      // optional managed-tempo name
+	PrometheusInstance string `json:"prometheus_instance,omitempty"` // optional managed-prometheus name
 }
 
 type ListGrafanaResponse struct {
@@ -470,4 +472,75 @@ type CreatePromtailRequest struct {
 
 type ListPromtailResponse struct {
 	Promtail []Promtail `json:"promtail"`
+}
+
+// Managed services — NATS (v0.10 messaging)
+type NATS struct {
+	Name      string    `json:"name"`
+	Version   string    `json:"version"`
+	Host      string    `json:"host"`
+	Port      int       `json:"port"`
+	JobID     string    `json:"job_id"`
+	URL       string    `json:"url"` // nats://host:port
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type CreateNATSRequest struct {
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"`
+	CPU     int    `json:"cpu,omitempty"`
+	Memory  int    `json:"memory,omitempty"`
+}
+
+type ListNATSResponse struct {
+	NATS []NATS `json:"nats"`
+}
+
+// Managed services — Tempo (v0.10 distributed tracing)
+type Tempo struct {
+	Name      string    `json:"name"`
+	Version   string    `json:"version"`
+	Host      string    `json:"host"`
+	HTTPPort  int       `json:"http_port"`
+	OTLPPort  int       `json:"otlp_port"`
+	JobID     string    `json:"job_id"`
+	URL       string    `json:"url"`       // http://host:http_port
+	OTLPGRPC  string    `json:"otlp_grpc"` // host:otlp_port
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type CreateTempoRequest struct {
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"`
+	CPU     int    `json:"cpu,omitempty"`
+	Memory  int    `json:"memory,omitempty"`
+}
+
+type ListTempoResponse struct {
+	Tempo []Tempo `json:"tempo"`
+}
+
+// Managed services — Prometheus (v0.10 metrics)
+type Prometheus struct {
+	Name      string    `json:"name"`
+	Version   string    `json:"version"`
+	Host      string    `json:"host"`
+	Port      int       `json:"port"`
+	JobID     string    `json:"job_id"`
+	URL       string    `json:"url"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type CreatePrometheusRequest struct {
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"`
+	CPU     int    `json:"cpu,omitempty"`
+	Memory  int    `json:"memory,omitempty"`
+}
+
+type ListPrometheusResponse struct {
+	Prometheus []Prometheus `json:"prometheus"`
 }

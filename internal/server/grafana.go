@@ -41,7 +41,9 @@ type grafanaMeta struct {
 	Version       string    `json:"version"`
 	Port          int       `json:"port"`
 	AdminPassword string    `json:"admin_password"`
-	LokiURL       string    `json:"loki_url,omitempty"` // captured at create time from services: binding
+	LokiURL       string    `json:"loki_url,omitempty"`       // captured at create time from --loki
+	TempoURL      string    `json:"tempo_url,omitempty"`      // --tempo
+	PrometheusURL string    `json:"prometheus_url,omitempty"` // --prometheus
 	CreatedAt     time.Time `json:"created_at"`
 }
 
@@ -187,12 +189,30 @@ func (s *Server) createGrafana(ctx context.Context, req *api.CreateGrafanaReques
 		}
 		lokiURL = fmt.Sprintf("http://%s:%d", s.postgresHost(), lm.Port)
 	}
+	tempoURL := ""
+	if req.TempoInstance != "" {
+		tm, err := s.loadTempo(req.TempoInstance)
+		if err != nil {
+			return nil, fmt.Errorf("tempo %q not found", req.TempoInstance)
+		}
+		tempoURL = fmt.Sprintf("http://%s:%d", s.postgresHost(), tm.HTTPPort)
+	}
+	prometheusURL := ""
+	if req.PrometheusInstance != "" {
+		pm, err := s.loadPrometheus(req.PrometheusInstance)
+		if err != nil {
+			return nil, fmt.Errorf("prometheus %q not found", req.PrometheusInstance)
+		}
+		prometheusURL = fmt.Sprintf("http://%s:%d", s.postgresHost(), pm.Port)
+	}
 	m := &grafanaMeta{
 		Name:          req.Name,
 		Version:       req.Version,
 		Port:          port,
 		AdminPassword: randomPassword(),
 		LokiURL:       lokiURL,
+		TempoURL:      tempoURL,
+		PrometheusURL: prometheusURL,
 		CreatedAt:     time.Now(),
 	}
 	if err := s.saveGrafana(m); err != nil {

@@ -19,10 +19,7 @@ import (
 func renderGrafanaJob(m *grafanaMeta, dc, id string, cpu, memory int) string {
 	volume := "blob-grafana-" + m.Name
 
-	dsYAML := emptyDatasourcesYAML
-	if m.LokiURL != "" {
-		dsYAML = fmt.Sprintf(lokiDatasourceYAML, m.LokiURL)
-	}
+	dsYAML := buildDatasourcesYAML(m.LokiURL, m.TempoURL, m.PrometheusURL)
 
 	dashYAML := dashboardsProviderYAML
 	dashJSON := allBlobAppsDashboardJSON
@@ -126,7 +123,34 @@ const emptyDatasourcesYAML = `apiVersion: 1
 datasources: []
 `
 
-// lokiDatasourceYAML is %s-formatted with the Loki base URL (http://host:port).
+// buildDatasourcesYAML composes the provisioning YAML from whichever of
+// loki/tempo/prometheus the operator passed at create time. The first
+// configured datasource is marked default in this priority: prometheus,
+// loki, tempo. If none are set we emit the empty template so grafana still
+// boots cleanly.
+func buildDatasourcesYAML(lokiURL, tempoURL, prometheusURL string) string {
+	if lokiURL == "" && tempoURL == "" && prometheusURL == "" {
+		return emptyDatasourcesYAML
+	}
+	var sb strings.Builder
+	sb.WriteString("apiVersion: 1\ndatasources:\n")
+	defaulted := false
+	if prometheusURL != "" {
+		fmt.Fprintf(&sb, "  - name: Prometheus\n    type: prometheus\n    access: proxy\n    url: %s\n    isDefault: true\n    editable: true\n", prometheusURL)
+		defaulted = true
+	}
+	if lokiURL != "" {
+		fmt.Fprintf(&sb, "  - name: Loki\n    type: loki\n    access: proxy\n    url: %s\n    isDefault: %t\n    editable: true\n", lokiURL, !defaulted)
+		defaulted = true
+	}
+	if tempoURL != "" {
+		fmt.Fprintf(&sb, "  - name: Tempo\n    type: tempo\n    access: proxy\n    url: %s\n    isDefault: %t\n    editable: true\n", tempoURL, !defaulted)
+	}
+	return sb.String()
+}
+
+// lokiDatasourceYAML is retained for back-compat with older grafana metas
+// that only stored LokiURL. New code paths use buildDatasourcesYAML.
 const lokiDatasourceYAML = `apiVersion: 1
 datasources:
   - name: Loki
@@ -163,10 +187,45 @@ const allBlobAppsDashboardJSON = `{
   "liveNow": false,
   "panels": [
     {
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"legend": {"displayMode": "list"}},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "Prometheus"},
+          "expr": "up",
+          "legendFormat": "{{service}} ({{node}})",
+          "refId": "A"
+        }
+      ],
+      "title": "Targets up (Prometheus)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "tempo", "uid": "Tempo"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "id": 2,
+      "options": {},
+      "targets": [
+        {
+          "datasource": {"type": "tempo", "uid": "Tempo"},
+          "queryType": "traceqlSearch",
+          "filters": [
+            {"id": "service-name", "tag": "service.name", "operator": "=~", "value": [".+"], "scope": "resource"}
+          ],
+          "refId": "A"
+        }
+      ],
+      "title": "Recent traces (Tempo)",
+      "type": "table"
+    },
+    {
       "datasource": {"type": "loki", "uid": "Loki"},
       "fieldConfig": {"defaults": {}, "overrides": []},
-      "gridPos": {"h": 22, "w": 24, "x": 0, "y": 0},
-      "id": 1,
+      "gridPos": {"h": 14, "w": 24, "x": 0, "y": 8},
+      "id": 3,
       "options": {
         "showLabels": true,
         "showCommonLabels": false,
@@ -184,7 +243,7 @@ const allBlobAppsDashboardJSON = `{
           "refId": "A"
         }
       ],
-      "title": "All Blob apps",
+      "title": "All Blob app logs (Loki)",
       "type": "logs"
     }
   ],
@@ -195,9 +254,9 @@ const allBlobAppsDashboardJSON = `{
   "time": {"from": "now-1h", "to": "now"},
   "timepicker": {},
   "timezone": "utc",
-  "title": "All Blob apps",
+  "title": "Blob apps — logs / traces / metrics",
   "uid": "blob-all-apps",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }
 `

@@ -371,6 +371,9 @@ func (s *Server) resolveServices(req *api.DeployRequest) error {
 	redisPrimary := true
 	lokiPrimary := true
 	grafanaPrimary := true
+	natsPrimary := true
+	tempoPrimary := true
+	prometheusPrimary := true
 	for _, svc := range req.Services {
 		// Try project binding first ("instance.project").
 		if instance, project := parseProjectBinding(svc); project != "" {
@@ -439,6 +442,15 @@ func (s *Server) resolveServices(req *api.DeployRequest) error {
 			continue
 		}
 		if s.lookupGrafanaForBinding(svc, req.Env, &grafanaPrimary) {
+			continue
+		}
+		if s.lookupNATSForBinding(svc, req.Env, &natsPrimary) {
+			continue
+		}
+		if s.lookupTempoForBinding(svc, req.Env, &tempoPrimary) {
+			continue
+		}
+		if s.lookupPrometheusForBinding(svc, req.Env, &prometheusPrimary) {
 			continue
 		}
 		return fmt.Errorf("service %q not found", svc)

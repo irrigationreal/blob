@@ -85,7 +85,7 @@ Usage:
   blob loki destroy <name> [--yes]
 
   blob grafana list
-  blob grafana create <name> [--version V] [--loki <instance>]
+  blob grafana create <name> [--version V] [--loki I] [--tempo I] [--prometheus I]
   blob grafana url <name>                         Print URL + admin password
   blob grafana destroy <name> [--yes]
 
@@ -93,11 +93,26 @@ Usage:
   blob promtail create <name> --loki <instance>   System job — one alloc per node
   blob promtail destroy <name> [--yes]
 
+  blob nats list
+  blob nats create <name> [--version V]
+  blob nats url <name>
+  blob nats destroy <name> [--yes]
+
+  blob tempo list
+  blob tempo create <name> [--version V]
+  blob tempo url <name>
+  blob tempo destroy <name> [--yes]
+
+  blob prometheus list
+  blob prometheus create <name> [--version V]
+  blob prometheus url <name>
+  blob prometheus destroy <name> [--yes]
+
   blob whoami                                     Test connection
   blob version                                    Print version
 `
 
-var version = "0.9.0"
+var version = "0.10.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -155,6 +170,12 @@ func main() {
 		cmdGrafana(args)
 	case "promtail":
 		cmdPromtail(args)
+	case "nats":
+		cmdNATS(args)
+	case "tempo":
+		cmdTempo(args)
+	case "prometheus":
+		cmdPrometheus(args)
 	case "doctor":
 		cmdDoctor()
 	case "whoami":
@@ -1475,9 +1496,11 @@ func cmdGrafana(args []string) {
 			die("usage: blob grafana create <name> [--version V] [--loki <instance>]")
 		}
 		req := &api.CreateGrafanaRequest{
-			Name:         name,
-			Version:      flags["version"],
-			LokiInstance: flags["loki"],
+			Name:               name,
+			Version:            flags["version"],
+			LokiInstance:       flags["loki"],
+			TempoInstance:      flags["tempo"],
+			PrometheusInstance: flags["prometheus"],
 		}
 		fmt.Printf("creating grafana %q...\n", name)
 		t0 := time.Now()
@@ -1590,6 +1613,209 @@ func cmdPromtail(args []string) {
 		fmt.Printf("destroyed promtail %q\n", name)
 	default:
 		die("unknown promtail subcommand: %s", args[0])
+	}
+}
+
+// --- managed services: nats / tempo / prometheus (v0.10) ---
+
+func cmdNATS(args []string) {
+	if len(args) == 0 {
+		die("usage: blob nats <list|create|url|destroy> ...")
+	}
+	c := mustClient()
+	switch args[0] {
+	case "list", "ls":
+		out, err := c.ListNATS(context.Background())
+		if err != nil {
+			die("%v", err)
+		}
+		if len(out.NATS) == 0 {
+			fmt.Println("no nats instances")
+			return
+		}
+		fmt.Printf("%-20s %-12s %-10s %-22s %-7s %s\n", "NAME", "VERSION", "STATUS", "HOST", "PORT", "URL")
+		for _, n := range out.NATS {
+			fmt.Printf("%-20s %-12s %-10s %-22s %-7d %s\n", n.Name, n.Version, n.Status, n.Host, n.Port, n.URL)
+		}
+	case "create":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob nats create <name> [--version V]")
+		}
+		fmt.Printf("creating nats %q...\n", name)
+		t0 := time.Now()
+		out, err := c.CreateNATS(context.Background(), &api.CreateNATSRequest{Name: name, Version: flags["version"]})
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("ready in %s\n  url: %s\n\nBind apps with:\n  services:\n    - %s\n", time.Since(t0).Round(100*time.Millisecond), out.URL, name)
+		fmt.Println("Apps will receive NATS_URL.")
+	case "url":
+		name := positional(parseFlags(args[1:]), 0)
+		if name == "" {
+			die("usage: blob nats url <name>")
+		}
+		n, err := c.GetNATS(context.Background(), name)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Println(n.URL)
+	case "destroy", "rm":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob nats destroy <name>")
+		}
+		if flags["yes"] != "true" {
+			fmt.Printf("destroy nats %q? (Docker volume blob-nats-%s preserved; type the name to confirm) ", name, name)
+			var line string
+			fmt.Fscanln(os.Stdin, &line)
+			if line != name {
+				die("aborted")
+			}
+		}
+		if err := c.DestroyNATS(context.Background(), name); err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("destroyed nats %q\n", name)
+	default:
+		die("unknown nats subcommand: %s", args[0])
+	}
+}
+
+func cmdTempo(args []string) {
+	if len(args) == 0 {
+		die("usage: blob tempo <list|create|url|destroy> ...")
+	}
+	c := mustClient()
+	switch args[0] {
+	case "list", "ls":
+		out, err := c.ListTempo(context.Background())
+		if err != nil {
+			die("%v", err)
+		}
+		if len(out.Tempo) == 0 {
+			fmt.Println("no tempo instances")
+			return
+		}
+		fmt.Printf("%-20s %-7s %-10s %-22s %-22s %s\n", "NAME", "VERSION", "STATUS", "HTTP", "OTLP", "URL")
+		for _, t := range out.Tempo {
+			fmt.Printf("%-20s %-7s %-10s %-22s %-22s %s\n",
+				t.Name, t.Version, t.Status,
+				fmt.Sprintf("%s:%d", t.Host, t.HTTPPort),
+				t.OTLPGRPC, t.URL)
+		}
+	case "create":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob tempo create <name> [--version V]")
+		}
+		fmt.Printf("creating tempo %q...\n", name)
+		t0 := time.Now()
+		out, err := c.CreateTempo(context.Background(), &api.CreateTempoRequest{Name: name, Version: flags["version"]})
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("ready in %s\n  http:     %s\n  otlp:     %s\n\nBind apps with:\n  services:\n    - %s\n", time.Since(t0).Round(100*time.Millisecond), out.URL, out.OTLPGRPC, name)
+		fmt.Println("Apps will receive TEMPO_URL, TEMPO_OTLP_GRPC, OTEL_EXPORTER_OTLP_ENDPOINT.")
+	case "url":
+		name := positional(parseFlags(args[1:]), 0)
+		if name == "" {
+			die("usage: blob tempo url <name>")
+		}
+		t, err := c.GetTempo(context.Background(), name)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("http: %s\notlp: %s\n", t.URL, t.OTLPGRPC)
+	case "destroy", "rm":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob tempo destroy <name>")
+		}
+		if flags["yes"] != "true" {
+			fmt.Printf("destroy tempo %q? (Docker volume blob-tempo-%s preserved; type the name to confirm) ", name, name)
+			var line string
+			fmt.Fscanln(os.Stdin, &line)
+			if line != name {
+				die("aborted")
+			}
+		}
+		if err := c.DestroyTempo(context.Background(), name); err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("destroyed tempo %q\n", name)
+	default:
+		die("unknown tempo subcommand: %s", args[0])
+	}
+}
+
+func cmdPrometheus(args []string) {
+	if len(args) == 0 {
+		die("usage: blob prometheus <list|create|url|destroy> ...")
+	}
+	c := mustClient()
+	switch args[0] {
+	case "list", "ls":
+		out, err := c.ListPrometheus(context.Background())
+		if err != nil {
+			die("%v", err)
+		}
+		if len(out.Prometheus) == 0 {
+			fmt.Println("no prometheus instances")
+			return
+		}
+		fmt.Printf("%-20s %-7s %-10s %-22s %-7s %s\n", "NAME", "VERSION", "STATUS", "HOST", "PORT", "URL")
+		for _, p := range out.Prometheus {
+			fmt.Printf("%-20s %-7s %-10s %-22s %-7d %s\n", p.Name, p.Version, p.Status, p.Host, p.Port, p.URL)
+		}
+	case "create":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob prometheus create <name> [--version V]")
+		}
+		fmt.Printf("creating prometheus %q...\n", name)
+		t0 := time.Now()
+		out, err := c.CreatePrometheus(context.Background(), &api.CreatePrometheusRequest{Name: name, Version: flags["version"]})
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("ready in %s\n  url: %s\n\nBind apps with:\n  services:\n    - %s\n", time.Since(t0).Round(100*time.Millisecond), out.URL, name)
+		fmt.Println("Apps will receive PROMETHEUS_URL.")
+	case "url":
+		name := positional(parseFlags(args[1:]), 0)
+		if name == "" {
+			die("usage: blob prometheus url <name>")
+		}
+		p, err := c.GetPrometheus(context.Background(), name)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Println(p.URL)
+	case "destroy", "rm":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob prometheus destroy <name>")
+		}
+		if flags["yes"] != "true" {
+			fmt.Printf("destroy prometheus %q? (Docker volume blob-prometheus-%s preserved; type the name to confirm) ", name, name)
+			var line string
+			fmt.Fscanln(os.Stdin, &line)
+			if line != name {
+				die("aborted")
+			}
+		}
+		if err := c.DestroyPrometheus(context.Background(), name); err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("destroyed prometheus %q\n", name)
+	default:
+		die("unknown prometheus subcommand: %s", args[0])
 	}
 }
 
