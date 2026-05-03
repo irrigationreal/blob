@@ -132,8 +132,23 @@ func (c *Client) Status(ctx context.Context, app string) (*api.StatusResponse, e
 }
 
 func (c *Client) Logs(ctx context.Context, app string, lines int) (*api.LogsResponse, error) {
+	return c.LogsWithOptions(ctx, app, lines, "", "")
+}
+
+// LogsWithOptions queries server-side logs. since (e.g. "5m") and grep
+// trigger the Loki path when a Loki instance is registered; without them
+// the server falls back to nomad alloc tail.
+func (c *Client) LogsWithOptions(ctx context.Context, app string, lines int, since, grep string) (*api.LogsResponse, error) {
+	q := url.Values{}
+	q.Set("lines", fmt.Sprintf("%d", lines))
+	if since != "" {
+		q.Set("since", since)
+	}
+	if grep != "" {
+		q.Set("grep", grep)
+	}
 	out := &api.LogsResponse{}
-	if err := c.do(ctx, "GET", fmt.Sprintf("/v1/apps/%s/logs?lines=%d", url.PathEscape(app), lines), nil, out); err != nil {
+	if err := c.do(ctx, "GET", fmt.Sprintf("/v1/apps/%s/logs?%s", url.PathEscape(app), q.Encode()), nil, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -407,4 +422,86 @@ func (c *Client) ValkeyURL(ctx context.Context, name string) (string, error) {
 
 func (c *Client) DestroyValkey(ctx context.Context, name string) error {
 	return c.do(ctx, "DELETE", "/v1/valkey/"+url.PathEscape(name), nil, nil)
+}
+
+// --- Loki ---
+
+func (c *Client) ListLoki(ctx context.Context) (*api.ListLokiResponse, error) {
+	out := &api.ListLokiResponse{}
+	if err := c.do(ctx, "GET", "/v1/loki", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) CreateLoki(ctx context.Context, req *api.CreateLokiRequest) (*api.Loki, error) {
+	out := &api.Loki{}
+	if err := c.do(ctx, "POST", "/v1/loki", req, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) GetLoki(ctx context.Context, name string) (*api.Loki, error) {
+	out := &api.Loki{}
+	if err := c.do(ctx, "GET", "/v1/loki/"+url.PathEscape(name), nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) DestroyLoki(ctx context.Context, name string) error {
+	return c.do(ctx, "DELETE", "/v1/loki/"+url.PathEscape(name), nil, nil)
+}
+
+// --- Grafana ---
+
+func (c *Client) ListGrafana(ctx context.Context) (*api.ListGrafanaResponse, error) {
+	out := &api.ListGrafanaResponse{}
+	if err := c.do(ctx, "GET", "/v1/grafana", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) CreateGrafana(ctx context.Context, req *api.CreateGrafanaRequest) (*api.Grafana, error) {
+	out := &api.Grafana{}
+	if err := c.do(ctx, "POST", "/v1/grafana", req, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) GrafanaURL(ctx context.Context, name string) (*api.GrafanaURL, error) {
+	out := &api.GrafanaURL{}
+	if err := c.do(ctx, "GET", "/v1/grafana/"+url.PathEscape(name)+"/url", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) DestroyGrafana(ctx context.Context, name string) error {
+	return c.do(ctx, "DELETE", "/v1/grafana/"+url.PathEscape(name), nil, nil)
+}
+
+// --- Promtail ---
+
+func (c *Client) ListPromtail(ctx context.Context) (*api.ListPromtailResponse, error) {
+	out := &api.ListPromtailResponse{}
+	if err := c.do(ctx, "GET", "/v1/promtail", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) CreatePromtail(ctx context.Context, req *api.CreatePromtailRequest) (*api.Promtail, error) {
+	out := &api.Promtail{}
+	if err := c.do(ctx, "POST", "/v1/promtail", req, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) DestroyPromtail(ctx context.Context, name string) error {
+	return c.do(ctx, "DELETE", "/v1/promtail/"+url.PathEscape(name), nil, nil)
 }

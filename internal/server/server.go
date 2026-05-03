@@ -18,10 +18,12 @@ import (
 	"io"
 	"log"
 	"net/http"
+	urlpkg "net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -118,6 +120,12 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/v1/postgres/", s.handlePostgresItem)
 	mux.HandleFunc("/v1/valkey", s.handleValkey)
 	mux.HandleFunc("/v1/valkey/", s.handleValkeyItem)
+	mux.HandleFunc("/v1/loki", s.handleLoki)
+	mux.HandleFunc("/v1/loki/", s.handleLokiItem)
+	mux.HandleFunc("/v1/grafana", s.handleGrafana)
+	mux.HandleFunc("/v1/grafana/", s.handleGrafanaItem)
+	mux.HandleFunc("/v1/promtail", s.handlePromtail)
+	mux.HandleFunc("/v1/promtail/", s.handlePromtailItem)
 	return s.withAuth(mux)
 }
 
@@ -415,12 +423,17 @@ func (s *Server) handleAppItem(w http.ResponseWriter, r *http.Request) {
 		if n <= 0 {
 			n = 200
 		}
-		lines, err := s.appLogs(r.Context(), app, n)
+		opts := logsOptions{
+			Lines: n,
+			Since: r.URL.Query().Get("since"),
+			Grep:  r.URL.Query().Get("grep"),
+		}
+		lines, source, err := s.appLogs(r.Context(), app, opts)
 		if err != nil {
 			writeErr(w, 500, err.Error())
 			return
 		}
-		writeJSON(w, 200, api.LogsResponse{App: app, Lines: lines})
+		writeJSON(w, 200, api.LogsResponse{App: app, Lines: lines, Source: source})
 	case len(parts) == 2 && parts[1] == "scale" && r.Method == "POST":
 		var sr api.ScaleRequest
 		if err := json.NewDecoder(r.Body).Decode(&sr); err != nil {
@@ -1015,26 +1028,183 @@ func (s *Server) appStatus(ctx context.Context, app string) (*api.StatusResponse
 	return resp, nil
 }
 
-func (s *Server) appLogs(ctx context.Context, app string, n int) ([]string, error) {
+// logsOptions controls how appLogs assembles the response. Loki is
+// preferred when at least one Loki instance is registered AND --since or
+// --grep was supplied; the nomad-tail path is used otherwise (preserves
+// the v0.1 behavior on a brand-new cluster).
+type logsOptions struct {
+	Lines int
+	Since string // "5m", "2h", "30s" — passed to Loki as start=now-<since>
+	Grep  string // substring filter; pushed into the LogQL query as |~ "<grep>"
+}
+
+func (s *Server) appLogs(ctx context.Context, app string, opts logsOptions) (lines []string, source string, err error) {
+	// Prefer Loki when registered and a since/grep filter is requested.
+	// Without a filter, the historical-tail story is the same as nomad's
+	// `alloc logs -tail`, so we keep the cheap path.
+	useLoki := (opts.Since != "" || opts.Grep != "")
+	if useLoki {
+		if base := s.firstLokiBase(); base != "" {
+			lines, lerr := s.queryLokiLogs(ctx, base, app, opts)
+			if lerr == nil {
+				return lines, "loki", nil
+			}
+			stdLog("loki query failed for %s: %v (falling back to nomad tail)", app, lerr)
+		}
+	}
 	body, err := s.nomadGET(ctx, "/v1/job/"+app+"/allocations")
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	var allocs []struct {
 		ID, ClientStatus string
 	}
 	if err := json.Unmarshal(body, &allocs); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	for _, a := range allocs {
 		if a.ClientStatus != "running" {
 			continue
 		}
-		out := s.output(ctx, "nomad", "alloc", "logs", "-tail", "-n", strconv.Itoa(n), a.ID)
-		lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-		return lines, nil
+		out := s.output(ctx, "nomad", "alloc", "logs", "-tail", "-n", strconv.Itoa(opts.Lines), a.ID)
+		split := strings.Split(strings.TrimRight(out, "\n"), "\n")
+		if opts.Grep != "" {
+			filtered := split[:0]
+			for _, l := range split {
+				if strings.Contains(l, opts.Grep) {
+					filtered = append(filtered, l)
+				}
+			}
+			split = filtered
+		}
+		return split, "nomad", nil
 	}
-	return []string{"(no running allocation)"}, nil
+	return []string{"(no running allocation)"}, "nomad", nil
+}
+
+// appAllocIDs returns every allocation ID for the named app (running OR
+// recently-stopped, so historical-window queries still resolve). Empty
+// list if the job doesn't exist.
+func (s *Server) appAllocIDs(ctx context.Context, app string) ([]string, error) {
+	body, err := s.nomadGET(ctx, "/v1/job/"+app+"/allocations")
+	if err != nil {
+		return nil, err
+	}
+	var allocs []struct {
+		ID string
+	}
+	if err := json.Unmarshal(body, &allocs); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(allocs))
+	for _, a := range allocs {
+		if a.ID != "" {
+			out = append(out, a.ID)
+		}
+	}
+	return out, nil
+}
+
+// firstLokiBase returns the http://host:port of the first registered Loki
+// instance, or "" if none are configured.
+func (s *Server) firstLokiBase() string {
+	entries, err := os.ReadDir(s.lokiMetaDir())
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		m, err := s.loadLoki(strings.TrimSuffix(e.Name(), ".json"))
+		if err == nil {
+			return fmt.Sprintf("http://%s:%d", s.postgresHost(), m.Port)
+		}
+	}
+	return ""
+}
+
+// queryLokiLogs hits Loki's /loki/api/v1/query_range. The Nomad docker
+// driver names the task generically inside the job ("app", "web", etc.)
+// so the app's identity lives in the alloc id, not the task name. We
+// resolve the app's running allocations via Nomad and query Loki with
+// {alloc=~"<id1>|<id2>|..."} so a single LogQL call returns just this app.
+func (s *Server) queryLokiLogs(ctx context.Context, base, app string, opts logsOptions) ([]string, error) {
+	allocIDs, err := s.appAllocIDs(ctx, app)
+	if err != nil {
+		return nil, fmt.Errorf("resolve allocs for %s: %w", app, err)
+	}
+	if len(allocIDs) == 0 {
+		return nil, fmt.Errorf("no allocations for app %q", app)
+	}
+	q := fmt.Sprintf(`{job="nomad-alloc",alloc=~%q}`, strings.Join(allocIDs, "|"))
+	if opts.Grep != "" {
+		safe := strings.ReplaceAll(opts.Grep, `"`, `\"`)
+		q = q + ` |~ "` + safe + `"`
+	}
+	since := opts.Since
+	if since == "" {
+		since = "1h"
+	}
+	dur, err := time.ParseDuration(since)
+	if err != nil {
+		return nil, fmt.Errorf("invalid since %q: %w", since, err)
+	}
+	end := time.Now().UTC()
+	start := end.Add(-dur)
+	limit := opts.Lines
+	if limit <= 0 {
+		limit = 200
+	}
+	u := fmt.Sprintf("%s/loki/api/v1/query_range?query=%s&start=%d&end=%d&limit=%d&direction=BACKWARD",
+		base,
+		urlpkg.QueryEscape(q),
+		start.UnixNano(),
+		end.UnixNano(),
+		limit,
+	)
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("loki query: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	var out struct {
+		Data struct {
+			Result []struct {
+				Stream map[string]string `json:"stream"`
+				Values [][2]string       `json:"values"` // [ns-string, line]
+			} `json:"result"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	type stamped struct {
+		ts   int64
+		line string
+	}
+	var rows []stamped
+	for _, r := range out.Data.Result {
+		for _, v := range r.Values {
+			ns, _ := strconv.ParseInt(v[0], 10, 64)
+			rows = append(rows, stamped{ts: ns, line: v[1]})
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].ts < rows[j].ts })
+	lines := make([]string, len(rows))
+	for i, r := range rows {
+		t := time.Unix(0, r.ts).UTC().Format(time.RFC3339)
+		lines[i] = t + " " + r.line
+	}
+	return lines, nil
 }
 
 func (s *Server) destroyApp(ctx context.Context, app string) error {

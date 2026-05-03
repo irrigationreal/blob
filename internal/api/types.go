@@ -99,8 +99,9 @@ type ListResponse struct {
 }
 
 type LogsResponse struct {
-	App   string   `json:"app"`
-	Lines []string `json:"lines"`
+	App    string   `json:"app"`
+	Lines  []string `json:"lines"`
+	Source string   `json:"source,omitempty"` // "loki" or "nomad"
 }
 
 type StatusResponse struct {
@@ -393,4 +394,80 @@ type ListValkeyResponse struct {
 
 type ValkeyURL struct {
 	URL string `json:"url"` // full redis://:<password>@host:port
+}
+
+// Managed services — Loki (v0.8 observability)
+type Loki struct {
+	Name      string    `json:"name"`
+	Version   string    `json:"version"`
+	Host      string    `json:"host"`
+	Port      int       `json:"port"`
+	JobID     string    `json:"job_id"`
+	URL       string    `json:"url"` // http://host:port (no auth — bind to private net)
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type CreateLokiRequest struct {
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"` // default 3.2
+	CPU     int    `json:"cpu,omitempty"`
+	Memory  int    `json:"memory,omitempty"`
+}
+
+type ListLokiResponse struct {
+	Loki []Loki `json:"loki"`
+}
+
+// Managed services — Grafana (v0.8 observability)
+type Grafana struct {
+	Name      string    `json:"name"`
+	Version   string    `json:"version"`
+	Host      string    `json:"host"`
+	Port      int       `json:"port"`
+	JobID     string    `json:"job_id"`
+	URL       string    `json:"url"`
+	LokiURL   string    `json:"loki_url,omitempty"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type CreateGrafanaRequest struct {
+	Name         string `json:"name"`
+	Version      string `json:"version,omitempty"` // default 11
+	CPU          int    `json:"cpu,omitempty"`
+	Memory       int    `json:"memory,omitempty"`
+	LokiInstance string `json:"loki_instance,omitempty"` // optional managed-loki name to provision as datasource
+}
+
+type ListGrafanaResponse struct {
+	Grafana []Grafana `json:"grafana"`
+}
+
+type GrafanaURL struct {
+	URL           string `json:"url"`
+	AdminPassword string `json:"admin_password"`
+}
+
+// Managed services — Promtail (v0.8 observability)
+type Promtail struct {
+	Name         string    `json:"name"`
+	Version      string    `json:"version"`
+	JobID        string    `json:"job_id"`
+	LokiInstance string    `json:"loki_instance"`
+	LokiURL      string    `json:"loki_url"`
+	Status       string    `json:"status"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+type CreatePromtailRequest struct {
+	Name         string `json:"name"`
+	Version      string `json:"version,omitempty"` // default 3.2
+	CPU          int    `json:"cpu,omitempty"`
+	Memory       int    `json:"memory,omitempty"`
+	LokiInstance string `json:"loki_instance"` // required — which managed Loki to ship to
+}
+
+type ListPromtailResponse struct {
+	Promtail []Promtail `json:"promtail"`
 }

@@ -369,6 +369,8 @@ func (s *Server) resolveServices(req *api.DeployRequest) error {
 	}
 	pgPrimary := true
 	redisPrimary := true
+	lokiPrimary := true
+	grafanaPrimary := true
 	for _, svc := range req.Services {
 		// Try project binding first ("instance.project").
 		if instance, project := parseProjectBinding(svc); project != "" {
@@ -428,6 +430,15 @@ func (s *Server) resolveServices(req *api.DeployRequest) error {
 		}
 		// Try Valkey
 		if s.lookupValkeyForBinding(svc, req.Env, &redisPrimary) {
+			continue
+		}
+		// Try Loki / Grafana (v0.8 observability). Each has its own primary
+		// slot (LOKI_URL / GRAFANA_URL) so multiple bindings still produce
+		// the canonical env on the first hit.
+		if s.lookupLokiForBinding(svc, req.Env, &lokiPrimary) {
+			continue
+		}
+		if s.lookupGrafanaForBinding(svc, req.Env, &grafanaPrimary) {
 			continue
 		}
 		return fmt.Errorf("service %q not found", svc)

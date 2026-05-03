@@ -367,3 +367,58 @@ restored in 400ms
   1 | sentinel-row-v0.5-roundtrip-take2 | 2026-05-03 19:16:02.220362+00
 ```
 
+
+## Observability (v0.8): Loki + Grafana + Promtail
+
+The Blob ships managed log storage (Loki), dashboards (Grafana), and a per-node log shipper (Promtail). All three are full Nomad jobs with persistent volumes, like postgres/valkey.
+
+```sh
+# 1. Stand up Loki — single-binary mode, filesystem store at /loki, ~512 MB resident.
+blob loki create platform-logs
+
+# 2. Stand up Grafana — auto-provisioned with a Loki datasource pointing at the
+#    instance you pass via --loki, plus a default "All Blob apps" dashboard.
+blob grafana create platform-graf --loki platform-logs
+blob grafana url platform-graf      # prints url + admin password
+
+# 3. Stand up Promtail — system job, one alloc per node. Tails
+#    /opt/nomad/data/alloc/*/alloc/logs/*.std{out,err}.[0-9]* and ships to Loki.
+blob promtail create platform-shipper --loki platform-logs
+```
+
+### How `blob logs` interacts with Loki
+
+`blob logs <app>` works without any of the above (it falls back to `nomad alloc logs --tail`). When a Loki instance is registered AND the operator passes `--since` or `--grep`, the server resolves the app's allocations via Nomad and queries Loki with `{job="nomad-alloc",alloc=~"<id1>|<id2>|..."}`:
+
+```sh
+blob logs my-app --since 5m
+blob logs my-app --since 1h --grep "ERROR"
+blob logs my-app --since 10m --follow      # polls every 2s, dedup'd
+```
+
+The response includes `Source: "loki"` or `Source: "nomad"` so callers can tell which path was used.
+
+### Why we don't slurp historical logs on first start
+
+A naive Promtail deployment on a busy node tails every existing alloc log file from byte 0, replaying potentially hundreds of MB through Loki and instantly OOM-killing the ingester. We avoid that with a `prestart` lifecycle task on the Promtail group that walks the alloc dir, computes each file's current end-of-file offset, and writes a `positions.yaml` to `/alloc/data/`. Promtail starts, loads positions, seeks to the tail, and only forwards lines written AFTER the seed ran. Steady-state throughput drops from MB/s on boot to KB/s.
+
+### Loki tuning
+
+Loki defaults assume a multi-GB host with multiple ingesters. Our config (rendered into `/local/loki-config.yaml` via Nomad template) tightens the in-memory profile so the whole stack fits in a 512 MB allocation:
+
+- `chunk_idle_period: 30s`, `chunk_target_size: 524288`, `max_chunk_age: 1h` — flush early, keep buffers small
+- `query_scheduler.max_outstanding_requests_per_tenant: 2048`, `frontend.max_outstanding_per_tenant: 2048` — don't 429 the operator's own queries
+- `auth_enabled: false` — single-tenant; Loki is bound to the host's private network only
+- `replication_factor: 1`, `ring.kvstore.store: inmemory` — no clustering needed for a single platform node
+
+### UFW
+
+The Loki and Grafana ports (13100, 13000 by default) are bound to `0.0.0.0` so containers in the docker bridge network can reach them. Open them in UFW:
+
+```sh
+sudo ufw allow 13000:13100/tcp comment "blob-observability"
+```
+
+### Recursive dogfood (v0.8 ship verification)
+
+Sentinel `V08-XYZ-1777844181` was hit against `compose-hello.irrigate.cc` from the platform host; 30 s later `blob logs compose-hello --since 5m` returned the matching nginx access-log line with the `Source: loki` field set. `--grep "V08-XYZ"` returned only the matching lines. Loki resident memory: 85 MiB / 512 MiB cap.
