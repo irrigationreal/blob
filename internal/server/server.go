@@ -32,18 +32,19 @@ import (
 )
 
 type Config struct {
-	Listen        string
-	Token         string
-	BaseDomain    string
-	Datacenter    string
-	Registry      string
-	StateDir      string
-	JobsDir       string
-	SourcesDir    string
-	SecretsDir    string
-	SecretKey     string
-	NomadAddr     string
-	RegistryCreds string
+	Listen           string
+	Token            string
+	BaseDomain       string
+	Datacenter       string
+	Registry         string
+	StateDir         string
+	JobsDir          string
+	SourcesDir       string
+	SecretsDir       string
+	SecretKey        string
+	NomadAddr        string
+	RegistryCreds    string
+	PlatformPublicIP string // optional; used when attaching user-external domains so we can print the correct A record
 }
 
 func DefaultConfig() Config {
@@ -89,6 +90,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/v1/secrets", s.handleSecrets)
 	mux.HandleFunc("/v1/secrets/", s.handleSecretItem)
 	mux.HandleFunc("/v1/doctor", s.handleDoctor)
+	mux.HandleFunc("/v1/nodes", s.handleNodes)
+	mux.HandleFunc("/v1/nodes/", s.handleNodeItem)
+	mux.HandleFunc("/v1/join", s.handleJoin)
+	mux.HandleFunc("/v1/volumes", s.handleVolumes)
 	return s.withAuth(mux)
 }
 
@@ -407,6 +412,44 @@ func (s *Server) handleAppItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, 200, map[string]any{"app": app, "replicas": sr.Replicas})
+	case len(parts) == 2 && parts[1] == "restart" && r.Method == "POST":
+		if err := s.restartApp(r.Context(), app); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		writeJSON(w, 200, map[string]any{"app": app, "restarted": true})
+	case len(parts) == 2 && parts[1] == "releases" && r.Method == "GET":
+		out, err := s.appReleases(r.Context(), app)
+		if err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		writeJSON(w, 200, out)
+	case len(parts) == 2 && parts[1] == "domains" && r.Method == "POST":
+		var dr api.DomainAttachRequest
+		if err := json.NewDecoder(r.Body).Decode(&dr); err != nil {
+			writeErr(w, 400, err.Error())
+			return
+		}
+		dr.App = app
+		out, err := s.attachDomain(r.Context(), &dr)
+		if err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		writeJSON(w, 200, out)
+	case len(parts) == 2 && parts[1] == "exec" && r.Method == "POST":
+		var er api.ExecRequest
+		if err := json.NewDecoder(r.Body).Decode(&er); err != nil {
+			writeErr(w, 400, err.Error())
+			return
+		}
+		out, err := s.appExec(r.Context(), app, er.Command)
+		if err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		writeJSON(w, 200, out)
 	default:
 		writeErr(w, 404, "not found")
 	}
@@ -427,7 +470,7 @@ func (s *Server) deployFromSource(ctx context.Context, src string, req *api.Depl
 		form = "web-service"
 	}
 	domain := req.Domain
-	if form == "web-service" {
+	if isHTTPForm(form) {
 		if domain == "" {
 			if req.Environment != "" && req.Environment != "prod" {
 				domain = id + "." + s.cfg.BaseDomain
@@ -451,7 +494,7 @@ func (s *Server) deployFromSource(ctx context.Context, src string, req *api.Depl
 
 	br := buildResult{Image: image, Port: req.Port}
 	if err := s.recordPhase(out, "build", func() error {
-		built, err := s.buildSource(ctx, src, image, req.Port)
+		built, err := s.buildSource(ctx, src, image, req.Port, req)
 		if err != nil {
 			return err
 		}
@@ -470,7 +513,6 @@ func (s *Server) deployFromSource(ctx context.Context, src string, req *api.Depl
 		return nil, err
 	}
 
-	// Resolve secret references into env vars before rendering the job.
 	if err := s.resolveSecrets(req); err != nil {
 		return nil, err
 	}
@@ -483,15 +525,16 @@ func (s *Server) deployFromSource(ctx context.Context, src string, req *api.Depl
 	out.Image = br.Image
 	out.JobID = id
 
-	// For batch (job/cronjob) the workload exits naturally; only wait for
-	// service-style forms.
-	if form == "web-service" || form == "daemon" {
+	if isLongRunningForm(form) {
 		if err := s.recordPhase(out, "ready", func() error { return s.waitJobRunning(ctx, id, 60*time.Second) }); err != nil {
 			return out, fmt.Errorf("did not become ready: %w", err)
 		}
 	}
 	return out, nil
 }
+
+func isHTTPForm(form string) bool   { return form == "web-service" || form == "static" }
+func isLongRunningForm(f string) bool { return f == "web-service" || f == "daemon" || f == "static" }
 
 func (s *Server) deployImage(ctx context.Context, req *api.DeployRequest, sourceApp string) (*api.DeployResponse, error) {
 	out := &api.DeployResponse{App: req.App, Environment: req.Environment, StartedAt: time.Now()}
@@ -501,7 +544,7 @@ func (s *Server) deployImage(ctx context.Context, req *api.DeployRequest, source
 		form = "web-service"
 	}
 	domain := req.Domain
-	if form == "web-service" {
+	if isHTTPForm(form) {
 		if domain == "" {
 			if req.Environment != "" && req.Environment != "prod" {
 				domain = id + "." + s.cfg.BaseDomain
@@ -526,7 +569,7 @@ func (s *Server) deployImage(ctx context.Context, req *api.DeployRequest, source
 		return nil, err
 	}
 	out.JobID = id
-	if form == "web-service" || form == "daemon" {
+	if isLongRunningForm(form) {
 		if err := s.recordPhase(out, "ready", func() error { return s.waitJobRunning(ctx, id, 60*time.Second) }); err != nil {
 			return out, fmt.Errorf("did not become ready: %w", err)
 		}
@@ -606,8 +649,18 @@ func (s *Server) readRegistryCreds() (string, string, error) {
 	return user, pass, nil
 }
 
-func (s *Server) buildSource(ctx context.Context, src, image string, portArg int) (buildResult, error) {
+func (s *Server) buildSource(ctx context.Context, src, image string, portArg int, req *api.DeployRequest) (buildResult, error) {
 	br := buildResult{Image: image, Port: portArg}
+	if req != nil && req.Form == "static" {
+		if err := s.prepareStaticBuild(ctx, src, req); err != nil {
+			return br, err
+		}
+		if err := s.run(ctx, "docker", "build", "-t", image, "-f", filepath.Join(src, "Dockerfile.blob-static"), src); err != nil {
+			return br, err
+		}
+		br.Port = 8080
+		return br, nil
+	}
 	for _, n := range []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"} {
 		p := filepath.Join(src, n)
 		if _, err := os.Stat(p); err == nil {
@@ -845,7 +898,7 @@ func (s *Server) listApps(ctx context.Context) ([]api.AppSummary, error) {
 			form = formFromNomadJob(j, false)
 		}
 		url := ""
-		if form == "web-service" {
+		if isHTTPForm(form) {
 			url = "https://" + domain
 		}
 		apps = append(apps, api.AppSummary{
@@ -898,7 +951,7 @@ func (s *Server) appStatus(ctx context.Context, app string) (*api.StatusResponse
 		}
 	}
 	url := ""
-	if form == "web-service" {
+	if isHTTPForm(form) {
 		url = "https://" + domain
 	}
 	resp := &api.StatusResponse{

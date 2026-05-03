@@ -13,20 +13,28 @@ import (
 // Component is a single workload that can stand on its own. A top-level
 // Manifest is itself a component plus app-level orchestration (Components).
 type Component struct {
-	Name     string            `yaml:"name,omitempty"`     // optional in single-component manifests; required when used inside Components
-	Form     string            `yaml:"form,omitempty"`     // web-service | daemon | job | cronjob
-	Domain   string            `yaml:"domain,omitempty"`   // overrides default <name>.<base>
-	Port     int               `yaml:"port,omitempty"`     // required for web-service unless inferable
-	Image    string            `yaml:"image,omitempty"`    // if set, deploy registry image directly
-	Command  []string          `yaml:"command,omitempty"`  // override the image's entrypoint command (useful for multi-component apps sharing one image)
-	CPU      int               `yaml:"cpu,omitempty"`      // MHz
-	Memory   int               `yaml:"memory,omitempty"`   // MiB
-	Replicas int               `yaml:"replicas,omitempty"` // count
-	Env      map[string]string `yaml:"env,omitempty"`      // literal env vars
-	Secrets  []SecretRef       `yaml:"secrets,omitempty"`  // env vars sourced from the secret store
-	Schedule string            `yaml:"schedule,omitempty"` // cron expression for cronjob form
-	Volumes  []VolumeMount     `yaml:"volumes,omitempty"`  // host-bind volumes (Docker volumes by name)
-	Sidecars []Sidecar         `yaml:"sidecars,omitempty"` // additional containers in the same Nomad group (Bundle)
+	Name        string            `yaml:"name,omitempty"`     // optional in single-component manifests; required when used inside Components
+	Form        string            `yaml:"form,omitempty"`     // web-service | daemon | job | cronjob | static
+	Domain      string            `yaml:"domain,omitempty"`   // overrides default <name>.<base>
+	Domains     []string          `yaml:"domains,omitempty"`  // additional hostnames
+	Port        int               `yaml:"port,omitempty"`     // required for web-service unless inferable
+	Image       string            `yaml:"image,omitempty"`    // if set, deploy registry image directly
+	Command     []string          `yaml:"command,omitempty"`  // override the image's entrypoint command
+	CPU         int               `yaml:"cpu,omitempty"`      // MHz
+	Memory      int               `yaml:"memory,omitempty"`   // MiB
+	Replicas    int               `yaml:"replicas,omitempty"` // count
+	Env         map[string]string `yaml:"env,omitempty"`      // literal env vars
+	Secrets     []SecretRef       `yaml:"secrets,omitempty"`  // env vars sourced from the secret store
+	Schedule    string            `yaml:"schedule,omitempty"` // cron expression for cronjob form
+	Volumes     []VolumeMount     `yaml:"volumes,omitempty"`  // per-app Docker named volumes
+	Sidecars    []Sidecar         `yaml:"sidecars,omitempty"` // additional containers in the same Nomad group (Bundle)
+
+	// Static-site fields (form: static)
+	Root        string   `yaml:"root,omitempty"`        // directory inside the source tree to serve (default: ".")
+	Build       string   `yaml:"build,omitempty"`       // optional build command (e.g. "npm run build"); output should land in `root` or `dist`
+	Index       string   `yaml:"index,omitempty"`       // index file (default: index.html)
+	NotFound    string   `yaml:"not_found,omitempty"`   // 404 path (e.g. /404.html); also used for SPA fallback when SPA is true
+	SPA         bool     `yaml:"spa,omitempty"`         // if true, serve index.html for any unmatched path (SPA routing)
 }
 
 // Sidecar is a co-scheduled container in the same Nomad group.
@@ -145,7 +153,7 @@ var envRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`)
 
 func (c *Component) validate() error {
 	switch c.Form {
-	case "web-service", "daemon", "job", "cronjob":
+	case "web-service", "daemon", "job", "cronjob", "static":
 	case "function", "vm":
 		return fmt.Errorf("form %q is reserved but not yet implemented", c.Form)
 	default:

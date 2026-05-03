@@ -37,6 +37,8 @@ func renderJob(req *api.DeployRequest, image string, port int, domain, dc string
 		return renderBatch(namespacedID, dc, image, req, envBlock, volumeBlocks, volumeMounts, sidecars, true, req.Schedule)
 	case "daemon":
 		return renderDaemon(namespacedID, dc, image, req, envBlock, volumeBlocks, volumeMounts, sidecars)
+	case "static":
+		return renderWebService(namespacedID, dc, image, port, domain, req, envBlock, volumeBlocks, volumeMounts, sidecars)
 	default: // web-service
 		return renderWebService(namespacedID, dc, image, port, domain, req, envBlock, volumeBlocks, volumeMounts, sidecars)
 	}
@@ -44,6 +46,7 @@ func renderJob(req *api.DeployRequest, image string, port int, domain, dc string
 
 func renderWebService(id, dc, image string, port int, domain string, req *api.DeployRequest, envBlock, volBlocks, volMounts, sidecars string) string {
 	cmdBlock := renderCommandBlock(req.Command)
+	traefikTags := renderTraefikTags(id, domain, req.Domains)
 	return fmt.Sprintf(`job %q {
   datacenters = [%q]
   type = "service"
@@ -62,14 +65,7 @@ func renderWebService(id, dc, image string, port int, domain string, req *api.De
       provider = "nomad"
       port     = "http"
       tags = [
-        "traefik.enable=true",
-        "traefik.http.routers.%s-http.rule=Host(`+"`%s`"+`)",
-        "traefik.http.routers.%s-http.entrypoints=web",
-        "traefik.http.routers.%s-https.rule=Host(`+"`%s`"+`)",
-        "traefik.http.routers.%s-https.entrypoints=websecure",
-        "traefik.http.routers.%s-https.tls=true",
-        "traefik.http.routers.%s-https.tls.certresolver=le"
-      ]
+%s      ]
     }
 
     task "app" {
@@ -85,7 +81,33 @@ func renderWebService(id, dc, image string, port int, domain string, req *api.De
     }
 %s  }
 }
-`, id, dc, req.Replicas, volBlocks, port, id, id, domain, id, id, domain, id, id, id, image, cmdBlock, volMounts, envBlock, req.CPU, req.Memory, sidecars)
+`, id, dc, req.Replicas, volBlocks, port, id, traefikTags, image, cmdBlock, volMounts, envBlock, req.CPU, req.Memory, sidecars)
+}
+
+// renderTraefikTags returns the tags for a service. The primary domain plus any
+// additional domains all map to the same backend. Each Host expression is or'd
+// together inside a single router rule using Traefik's || syntax.
+func renderTraefikTags(id, primary string, extras []string) string {
+	hosts := append([]string{primary}, extras...)
+	rule := strings.Builder{}
+	for i, h := range hosts {
+		if i > 0 {
+			rule.WriteString(" || ")
+		}
+		rule.WriteString("Host(`")
+		rule.WriteString(h)
+		rule.WriteString("`)")
+	}
+	r := rule.String()
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "        \"traefik.enable=true\",\n")
+	fmt.Fprintf(&sb, "        \"traefik.http.routers.%s-http.rule=%s\",\n", id, r)
+	fmt.Fprintf(&sb, "        \"traefik.http.routers.%s-http.entrypoints=web\",\n", id)
+	fmt.Fprintf(&sb, "        \"traefik.http.routers.%s-https.rule=%s\",\n", id, r)
+	fmt.Fprintf(&sb, "        \"traefik.http.routers.%s-https.entrypoints=websecure\",\n", id)
+	fmt.Fprintf(&sb, "        \"traefik.http.routers.%s-https.tls=true\",\n", id)
+	fmt.Fprintf(&sb, "        \"traefik.http.routers.%s-https.tls.certresolver=le\"\n", id)
+	return sb.String()
 }
 
 func renderDaemon(id, dc, image string, req *api.DeployRequest, envBlock, volBlocks, volMounts, sidecars string) string {

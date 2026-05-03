@@ -186,3 +186,62 @@ func (c *Client) Doctor(ctx context.Context) (*api.DoctorResponse, error) {
 	}
 	return out, nil
 }
+
+func (c *Client) ListNodes(ctx context.Context) (*api.ListNodesResponse, error) {
+	out := &api.ListNodesResponse{}
+	if err := c.do(ctx, "GET", "/v1/nodes", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) DrainNode(ctx context.Context, id string, on bool) error {
+	if on {
+		return c.do(ctx, "POST", "/v1/nodes/"+url.PathEscape(id)+"/drain", nil, nil)
+	}
+	return c.do(ctx, "DELETE", "/v1/nodes/"+url.PathEscape(id)+"/drain", nil, nil)
+}
+
+func (c *Client) JoinScript(ctx context.Context) (*api.JoinTokenResponse, error) {
+	out := &api.JoinTokenResponse{}
+	if err := c.do(ctx, "GET", "/v1/join", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) ListVolumes(ctx context.Context) (*api.ListVolumesResponse, error) {
+	out := &api.ListVolumesResponse{}
+	if err := c.do(ctx, "GET", "/v1/volumes", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) Restart(ctx context.Context, app string) error {
+	return c.do(ctx, "POST", "/v1/apps/"+url.PathEscape(app)+"/restart", nil, nil)
+}
+
+func (c *Client) Releases(ctx context.Context, app string) (*api.ListReleasesResponse, error) {
+	out := &api.ListReleasesResponse{}
+	if err := c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(app)+"/releases", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) AttachDomain(ctx context.Context, app, host, mode string) (*api.DomainAttachResponse, error) {
+	out := &api.DomainAttachResponse{}
+	if err := c.do(ctx, "POST", "/v1/apps/"+url.PathEscape(app)+"/domains", &api.DomainAttachRequest{Host: host, Mode: mode}, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) Exec(ctx context.Context, app string, cmd []string) (*api.ExecResponse, error) {
+	out := &api.ExecResponse{}
+	if err := c.do(ctx, "POST", "/v1/apps/"+url.PathEscape(app)+"/exec", &api.ExecRequest{Command: cmd}, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}

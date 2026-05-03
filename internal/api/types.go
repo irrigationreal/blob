@@ -8,6 +8,7 @@ type DeployRequest struct {
 	App         string            `json:"app"`
 	Environment string            `json:"environment,omitempty"`
 	Domain      string            `json:"domain,omitempty"`
+	Domains     []string          `json:"domains,omitempty"`
 	Port        int               `json:"port,omitempty"`
 	Tag         string            `json:"tag,omitempty"`
 	Command     []string          `json:"command,omitempty"`
@@ -16,10 +17,17 @@ type DeployRequest struct {
 	Replicas    int               `json:"replicas,omitempty"`
 	Env         map[string]string `json:"env,omitempty"`
 	Secrets     []SecretBinding   `json:"secrets,omitempty"`
-	Form        string            `json:"form,omitempty"`     // web-service | daemon | job | cronjob
+	Form        string            `json:"form,omitempty"`     // web-service | daemon | job | cronjob | static
 	Schedule    string            `json:"schedule,omitempty"` // cron expression for cronjob
 	Volumes     []VolumeMount     `json:"volumes,omitempty"`
 	Sidecars    []Sidecar         `json:"sidecars,omitempty"`
+
+	// Static-site fields (form: static)
+	Root     string `json:"root,omitempty"`
+	Build    string `json:"build,omitempty"`
+	Index    string `json:"index,omitempty"`
+	NotFound string `json:"not_found,omitempty"`
+	SPA      bool   `json:"spa,omitempty"`
 }
 
 type SecretBinding struct {
@@ -175,4 +183,72 @@ type Volume struct {
 
 type ListVolumesResponse struct {
 	Volumes []Volume `json:"volumes"`
+}
+
+// Nodes
+type Node struct {
+	ID         string            `json:"id"`
+	Name       string            `json:"name"`
+	Address    string            `json:"address"`
+	Datacenter string            `json:"datacenter"`
+	Status     string            `json:"status"`     // ready | down | initializing
+	Eligible   string            `json:"eligible"`   // eligible | ineligible
+	Drain      bool              `json:"drain"`
+	NodeClass  string            `json:"node_class,omitempty"`
+	Labels     map[string]string `json:"labels,omitempty"`
+}
+
+type ListNodesResponse struct {
+	Nodes []Node `json:"nodes"`
+}
+
+type JoinTokenResponse struct {
+	Address    string `json:"address"`     // host:port of Nomad server
+	Token      string `json:"token"`       // bootstrap token (or empty if ACLs disabled)
+	JoinScript string `json:"join_script"` // sh one-liner for the new node
+}
+
+// Custom domain attach. Mode is one of: platform-base, user-managed, user-external.
+type DomainAttachRequest struct {
+	App   string `json:"app"`
+	Host  string `json:"host"`
+	Mode  string `json:"mode,omitempty"` // optional; default platform-base/user-external auto-detected
+}
+
+type DomainAttachResponse struct {
+	App         string             `json:"app"`
+	Host        string             `json:"host"`
+	URL         string             `json:"url"`
+	Mode        string             `json:"mode"`
+	DNSRecords  []DNSRecord        `json:"dns_records,omitempty"` // for user-external mode
+}
+
+type DNSRecord struct {
+	Type  string `json:"type"`  // A | CNAME | TXT
+	Name  string `json:"name"`
+	Value string `json:"value"`
+	TTL   int    `json:"ttl,omitempty"`
+}
+
+// Releases
+type Release struct {
+	Revision  int       `json:"revision"`
+	JobID     string    `json:"job_id"`
+	Image     string    `json:"image"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type ListReleasesResponse struct {
+	Releases []Release `json:"releases"`
+}
+
+// Exec
+type ExecRequest struct {
+	Command []string `json:"command"`
+}
+
+type ExecResponse struct {
+	Output   string `json:"output"`
+	ExitCode int    `json:"exit_code"`
 }

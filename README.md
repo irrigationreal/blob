@@ -2,7 +2,7 @@
 
 Self-hosted, agent-native PaaS. Stand in a folder, run `blob deploy`, get a public HTTPS URL.
 
-This monorepo contains The Blob's runtime. Live deployment: <https://blob.irrigate.cc> (control-plane API), apps land at `https://<name>.irrigate.cc`.
+This monorepo is The Blob's runtime. Live deployment: <https://blob.irrigate.cc> (control-plane API). Deployed apps land at `https://<name>.irrigate.cc`.
 
 ## Quick start
 
@@ -10,67 +10,111 @@ This monorepo contains The Blob's runtime. Live deployment: <https://blob.irriga
 # 1. Install blobctl (macOS / Linux, amd64 or arm64)
 curl -fsSL https://raw.githubusercontent.com/darvell/blob/main/scripts/install.sh | sh
 
-# 2. Point it at a Blob endpoint and authenticate
+# 2. Authenticate
 blob login --endpoint https://blob.irrigate.cc --token $YOUR_TOKEN
 
-# 3. In any project folder with a Dockerfile or Compose file
-blob init                 # writes blob.yaml
-blob deploy               # builds, pushes, schedules, returns the URL
+# 3. In any project folder
+blob init                 # auto-detects: Dockerfile, Compose, static, package.json build
+blob deploy
 ```
 
-## What the runtime ships today (v0.2)
+That's it. The CLI tarballs the folder, ships it to `blobd`, which builds on the host (so the architecture matches), pushes to the platform registry, schedules a Nomad job, and Traefik picks up the route. ACME issues the cert automatically on first hit.
 
-| Capability                                              | Status      |
+## Five live dogfooded apps
+
+These are real side projects pulled out of `~/code` and deployed with no edits beyond `blob init`:
+
+- <https://pong.irrigate.cc/> — single-file static
+- <https://emoji-paint.irrigate.cc/>
+- <https://dither-logo.irrigate.cc/>
+- <https://robot-avatar.irrigate.cc/>
+- <https://nye-2025.irrigate.cc/>
+
+Plus an example with a custom domain attached: <https://static.darv.ai/> (same backing app as `pong`).
+
+## What runs today
+
+| Capability                                                     | Status   |
 |---|---|
-| Single-command deploy from a folder                     | shipped     |
-| `web-service`, `daemon`, `job`, `cronjob` workload forms| shipped     |
-| Multi-component **App** manifest (apps with web + worker + cron, etc.) | shipped     |
-| **Bundle** sidecars (co-scheduled tasks sharing the network namespace) | shipped     |
-| Per-component **command override** (one image, many entrypoints)        | shipped     |
-| **Secrets**: AES-256-GCM encrypted store, per-environment, env injection| shipped     |
-| **Environments** (`prod`, `staging`, `pr-1234`, …)                     | shipped     |
-| **Scaling** (`blob scale <app> <n>`)                                   | shipped     |
-| Custom **domains** (per-component or per-app)                          | shipped     |
-| Auto HTTPS (Traefik + ACME)                                            | shipped     |
-| **Doctor** drift / orphan / liveness checks                            | shipped     |
-| Phase-timed deploys (registry-login → build → push → schedule → ready) | shipped     |
-| Cross-platform release binaries (linux/darwin × amd64/arm64)            | shipped     |
-| `/blob` Claude Code skill                                              | shipped     |
+| One-command deploy from any folder                             | shipped  |
+| **Auto-detect** Dockerfile / Compose / `index.html` / build script | shipped  |
+| **Static sites** via `form: static` (Caddy serves a folder)    | shipped  |
+| `web-service`, `daemon`, `job`, `cronjob` workload forms       | shipped  |
+| Multi-component **App** manifest (web + worker + cron)         | shipped  |
+| **Bundle** sidecars (co-scheduled tasks sharing the netns)     | shipped  |
+| Per-component **command override**                             | shipped  |
+| **Secrets**: AES-256-GCM at rest, per-environment, env injection | shipped |
+| **Environments** (`prod`, `staging`, `pr-1234`, …)             | shipped  |
+| **Custom domains** with `blob domains attach` (auto-HTTPS)     | shipped  |
+| **Multiple hostnames** per app                                 | shipped  |
+| **Scaling** (`blob scale`)                                     | shipped  |
+| **Restart** (`blob restart`)                                   | shipped  |
+| **Releases** (`blob releases`)                                 | shipped  |
+| **Exec** into a running allocation (`blob exec`)               | shipped  |
+| **Open** in browser (`blob open`)                              | shipped  |
+| **Volumes**: per-app Docker named volumes                      | shipped  |
+| **Nodes**: list, drain, undrain, generate join script          | shipped  |
+| **Doctor** drift / orphan / liveness checks                    | shipped  |
+| **Bootstrap script** for turning a fresh server into a Blob    | shipped  |
+| Phase-timed deploys                                            | shipped  |
+| `/blob` Claude Code skill                                      | shipped  |
 
-## What the spec describes that the runtime does **not** yet implement
+## What the spec describes that's not yet here
 
-The full spec ([`docs/the-blob-spec.md`](docs/the-blob-spec.md)) lists the shape of the v1 platform. The runtime in this repo is the deploy-and-operate core. The pieces below are described in the spec but are **not** yet wired into `blobd`/`blobctl`. Each item is a real gap, not a faked one — they're flagged so users know what to expect.
+The full v1 spec ([`docs/the-blob-spec.md`](docs/the-blob-spec.md)) is the destination. The runtime ships the deploy core and operability surfaces. Honest gap list:
 
-- Kata microVM isolation, blebs warm pool, hot journal volumes, rewind
+- Kata microVMs, blebs warm pool, hot journal volumes, rewind
 - Resource graph + manifest projection-hash drift detection
-- Full **observability stack** (Loki/Tempo/Prometheus); workloads can already emit logs through Nomad's allocation log API but there is no integrated metrics/traces backend yet
+- Built-in **observability stack** (Loki/Tempo/Prometheus integration)
 - **Autoscaling** beyond explicit `blob scale`
-- **Backups** + point-in-time recovery for managed services and Volumes
+- **Backups + PITR** for managed services and Volumes (Velero-style)
 - **Multi-region** active-passive failover
-- **Preview environments** auto-created from CI webhooks (the *Environment* primitive is already in `blob.yaml`; the CI webhook glue isn't)
-- **Status pages**
-- **Cost** rollups
-- **Plugin host**
-- Importers beyond Compose/Dockerfile (Helm, Fly, Heroku, Render, Vercel/Netlify, Cloudflare Workers, Procfile, Nix flakes)
-- Web console
-- Managed-service catalog (Postgres via CloudNativePG, Valkey, NATS, ScyllaDB, etc.) — runs on Nomad today but does not have first-class `blob.yaml` `ManagedService` shape yet
-- GPU + confidential compute
+- **Preview environments** auto-created from CI webhooks (the *Environment* primitive is in `blob.yaml`; the CI webhook glue isn't)
+- **Status pages**, cost rollups, plugins, web console, GPU/confidential compute
+- Importers beyond Dockerfile/Compose: Helm, Heroku/Procfile, Render, Vercel/Netlify, Fly, Nix flakes
+- Managed-service catalog (CloudNativePG, Valkey, NATS, ScyllaDB) — runs on Nomad today but is not a first-class `ManagedService` primitive yet
 
-The roadmap is to build these on top of the existing `blobctl` ↔ `blobd` API contract, not to rewrite. The manifest format already has hooks (`secrets:`, `volumes:`, `sidecars:`, `components:`, `environment:`, `command:`) so adding observability/backups/managed-services later doesn't break manifests written today.
+## Setting up your own Blob
+
+Two short docs:
+
+- **[`docs/host-setup.md`](docs/host-setup.md)** — turn a fresh server into a Blob (one shell script + a systemd unit).
+- **[`docs/joining-nodes.md`](docs/joining-nodes.md)** — add another machine to an existing Blob.
+- **[`docs/operator.md`](docs/operator.md)** — day-2 ops: backups, drains, upgrades, recovering from a dead node.
 
 ## blob.yaml
 
-`blob.yaml` is the canonical authoring file. Everything is optional except `name`. Defaults are sensible, flags override.
+`blob.yaml` is the canonical authoring file. Everything is optional except `name`. `blob init` auto-detects a sensible starting point.
 
-### Single-component (web service)
+### Static site
+
+```yaml
+name: my-site
+form: static
+root: .              # or "dist", "build", "out", "_site", "public"
+spa: false           # true = SPA fallback to index.html for any unmatched path
+not_found: /404.html # optional: serve this for 404s
+```
+
+For React/Vite/Next/etc. with a build step:
+
+```yaml
+name: my-spa
+form: static
+build: "pnpm install && pnpm run build"
+root: dist
+spa: true
+```
+
+### Single web service
 
 ```yaml
 name: hello
-form: web-service       # web-service | daemon | job | cronjob
+form: web-service
 port: 8080
 domain: hello.example.com
-env:
-  LOG_LEVEL: info
+domains:
+  - hello-alt.example.com
 secrets:
   - env: API_TOKEN
     name: hello-api-token
@@ -79,7 +123,7 @@ volumes:
     path: /var/lib/hello
 ```
 
-### Single-component (cronjob)
+### Cronjob
 
 ```yaml
 name: nightly-backup
@@ -126,23 +170,36 @@ components:
     command: ["node", "nightly.js"]
 ```
 
-Each component becomes its own Nomad job named `<app>-<component>` (e.g. `my-app-web`, `my-app-worker`). All components share the same uploaded source directory and the same built image; `command` lets each one run a different process.
+Each component becomes its own Nomad job named `<app>-<component>` (e.g. `my-app-web`, `my-app-worker`).
 
 ## CLI reference
 
 ```
-blob init [--name N] [--port P] [--domain D]
+blob init [--name N] [--port P] [--domain D] [--form F] [--root D]
 blob login --endpoint URL [--token T]
 blob deploy [--name N] [--port P] [--domain D] [--image IMG] [--env ENV]
 blob list
 blob status <app>
 blob logs <app> [-n 200]
 blob scale <app> <replicas>
+blob restart <app>
+blob releases <app>
+blob open <app>
+blob exec <app> -- <cmd ...>
 blob destroy <app> [--yes]
+
+blob domains attach <app> <host> [--mode MODE]
 
 blob secrets list [--env ENV]
 blob secrets set <name> [--env ENV] [--from FILE | --value V]
 blob secrets unset <name> [--env ENV]
+
+blob nodes list
+blob nodes drain <id>
+blob nodes undrain <id>
+blob nodes join          # prints a one-liner shell script for a new server
+
+blob volumes list
 
 blob doctor
 
@@ -152,60 +209,17 @@ blob version
 
 Environment variables: `BLOB_HOST`, `BLOB_TOKEN`. They override config file values.
 
-## What `blob deploy` actually does
-
-```
-project folder
-  → tar.gz (excludes .git, node_modules, .next, dist, build, .venv, ...)
-  → POST /v1/sources/<app>          (server unpacks to /srv/blob/sources/<app>)
-  → POST /v1/deploy                 (single component)
-    or POST /v1/deploy-app          (multi-component)
-  → for each component:
-    docker login registry           (registry-login phase)
-    docker build / compose build    (build phase)
-    docker push                     (push phase)
-    resolve secrets:                (env + secret store lookup)
-    render Nomad HCL job, write meta.json, nomad job run  (schedule phase)
-    poll /v1/job/<id>/allocations until running           (ready phase)
-  → reply with phase timings and the URL(s)
-```
-
-Every phase is timed and surfaced to the user. Failures stop the chain and return the failed phase name with the underlying error.
-
-## blobd — running the control plane
-
-`blobd` is a single Go binary. It needs:
-
-- A working Nomad cluster (HTTP API on `127.0.0.1:4646` by default)
-- Docker on the same host (used for `docker build`, `docker push`, registry login)
-- A container registry the host can push to
-- A Traefik instance with the Nomad provider (so the routing tags written into Nomad jobs become live routes)
-- Wildcard DNS pointing at the host (`*.<base-domain>`)
-
-```sh
-blobd \
-  --listen 127.0.0.1:8787 \
-  --base-domain irrigate.cc \
-  --dc pve \
-  --registry registry.irrigate.cc \
-  --state /srv/blob \
-  --registry-creds /etc/blob/registry-credentials.txt
-```
-
-Bearer token is read from `BLOB_TOKEN`. If unset, the API is open (only safe behind a firewall).
-
-A reference systemd unit is in [`scripts/blobd.service`](scripts/blobd.service) and a deploy script in [`scripts/install-blobd.sh`](scripts/install-blobd.sh). The unit binds to `127.0.0.1:8787`; the recommended setup is to expose blobd through Traefik with the same routing tags any other Blob app uses (see [`scripts/blobd-edge.nomad`](scripts/blobd-edge.nomad)).
-
 ## Architecture
 
 ```
-laptop                                    platform host
+laptop                                    platform host(s)
 ─────                                     ─────────────
 blobctl ──tar.gz──> /v1/sources/<app> ──> /srv/blob/sources/<app>
         ──json───>  /v1/deploy[-app]
                       │
                       ├── resolve secrets (AES-256-GCM at rest in /srv/blob/secrets)
                       ├── docker login <registry>
+                      ├── if form=static: synthesize Caddyfile + Dockerfile.blob-static
                       ├── docker build  -t <registry>/<app>:<tag>
                       ├── docker push   <registry>/<app>:<tag>
                       ├── render Nomad HCL → /srv/blob/jobs/<id>.nomad
@@ -214,35 +228,44 @@ blobctl ──tar.gz──> /v1/sources/<app> ──> /srv/blob/sources/<app>
                       └── poll /v1/job/<id>/allocations until running
                                                 │
                                                 ▼
-                                            Traefik (Nomad provider)
+                                      Traefik (Nomad provider)
                                                 │
                                                 ▼
-                                          https://<id>.<base-domain>
+                                      https://<id>.<base-domain>
 ```
+
+Multi-node fleets: any number of additional Nomad clients can register with `blob nodes join`. Workloads place across the fleet automatically based on capacity.
 
 ## Repository layout
 
 ```
 cmd/
-  blobctl/          # the CLI
-  blobd/            # the control-plane daemon
+  blobctl/                 # the CLI
+  blobd/                   # the control-plane daemon
 internal/
-  api/              # request/response types, shared between client and server
-  client/           # HTTP client for the API
-  config/           # blobctl client config
-  manifest/         # blob.yaml parser and validator
-  secrets/          # at-rest-encrypted secret store
-  server/           # blobd: routes, deploy phases, Nomad job rendering, doctor
-  tarball/          # deterministic tar.gz packer with sane excludes
-skills/
-  blob/             # /blob Claude Code skill
+  api/                     # request/response types, shared between client and server
+  client/                  # HTTP client
+  config/                  # blobctl config
+  detect/                  # auto-detect project type for `blob init`
+  manifest/                # blob.yaml parser and validator
+  secrets/                 # at-rest-encrypted secret store
+  server/                  # blobd: routes, deploy phases, Nomad job rendering
+                           # nodes.go: nodes/join/volumes/restart/exec/domains
+                           # static.go: form=static (Caddy) build path
+                           # doctor: drift/orphan checks
+  tarball/                 # deterministic tar.gz packer
+skills/blob/               # /blob Claude Code skill
 docs/
-  the-blob-spec.md  # full Business Requirements + Technical Spec
+  the-blob-spec.md         # full Business Requirements + Technical Spec
+  host-setup.md            # turn a fresh server into a Blob
+  joining-nodes.md         # add a node to an existing Blob
+  operator.md              # day-2 ops runbook
 scripts/
-  install.sh        # blobctl installer
-  install-blobd.sh  # blobd installer (run on the platform host)
-  blobd.service     # systemd unit
-  blobd-edge.nomad  # Nomad job that exposes blobd through Traefik
+  install.sh               # blobctl installer (curl | sh)
+  bootstrap-host.sh        # one-shot: Docker + Nomad + Traefik + registry
+  install-blobd.sh         # systemd unit installer
+  blobd.service            # systemd unit
+  blobd-edge.nomad         # Nomad job that exposes blobd through Traefik
 ```
 
 ## Building from source

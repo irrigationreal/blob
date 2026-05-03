@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/darvell/blob/internal/api"
 	"github.com/darvell/blob/internal/client"
 	"github.com/darvell/blob/internal/config"
+	"github.com/darvell/blob/internal/detect"
 	"github.com/darvell/blob/internal/manifest"
 	"github.com/darvell/blob/internal/tarball"
 )
@@ -21,33 +23,41 @@ import (
 const usage = `blobctl — deploy folders to The Blob
 
 Usage:
-  blob init [--name N] [--port P] [--domain D]    Create a blob.yaml in current directory
+  blob init [--name N] [--port P] [--domain D] [--form F] [--root D]
+                                                  Create a blob.yaml in current directory (auto-detects)
   blob login --endpoint URL [--token T]           Save endpoint and token
-  blob deploy [--name N] [--port P] [--env ENV]   Deploy current folder (single or app)
+  blob deploy [--name N] [--port P] [--env ENV]   Deploy current folder
   blob list                                       List apps
   blob status <app>                               Show one app
   blob logs <app> [-n 200]                        Tail recent logs
   blob scale <app> <replicas>                     Scale a service
+  blob restart <app>                              Restart all allocations
+  blob releases <app>                             Show deploy history
   blob destroy <app> [--yes]                      Tear down an app
+  blob open <app>                                 Open the app's URL in your browser
+
+  blob exec <app> -- <cmd ...>                    Run a command inside the app
+
+  blob domains attach <app> <host> [--mode MODE]  Attach an extra hostname; prints DNS for user-external
 
   blob secrets list [--env ENV]                   List secrets (names + lengths only)
   blob secrets set <name> [--env ENV] [--from FILE | --value V]
   blob secrets unset <name> [--env ENV]
 
+  blob nodes list                                 List Nomad client nodes
+  blob nodes drain <id>                           Drain a node (move workloads off)
+  blob nodes undrain <id>                         Stop draining
+  blob nodes join                                 Print a one-liner to join a new server to the Blob
+
+  blob volumes list                               List per-app Docker volumes
+
   blob doctor                                     Run platform self-check
 
   blob whoami                                     Test connection
   blob version                                    Print version
-
-Environment:
-  BLOB_HOST     base URL of blobd, e.g. https://blob.irrigate.cc
-  BLOB_TOKEN    bearer token for blobd
-
-Manifest (blob.yaml) is optional for single-component deploys; flags override.
-For multi-component apps, blob.yaml is required (use the components: list).
 `
 
-var version = "0.2.0"
+var version = "0.3.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -75,8 +85,22 @@ func main() {
 		cmdLogs(args)
 	case "scale":
 		cmdScale(args)
+	case "restart":
+		cmdRestart(args)
+	case "releases":
+		cmdReleases(args)
 	case "destroy", "rm":
 		cmdDestroy(args)
+	case "open":
+		cmdOpen(args)
+	case "exec":
+		cmdExec(args)
+	case "domains":
+		cmdDomains(args)
+	case "nodes":
+		cmdNodes(args)
+	case "volumes":
+		cmdVolumes(args)
 	case "secrets":
 		cmdSecrets(args)
 	case "doctor":
@@ -140,19 +164,25 @@ func atoi(s string) int                                  { n, _ := strconv.Atoi(
 
 func cmdInit(args []string) {
 	flags := parseFlags(args)
-	name := flags["name"]
-	if name == "" {
-		cwd, _ := os.Getwd()
-		name = strings.ToLower(filepath.Base(cwd))
+	cwd, _ := os.Getwd()
+	c, why := detect.Detect(cwd)
+	// Apply flag overrides
+	if v := flags["name"]; v != "" {
+		c.Name = v
 	}
-	m := &manifest.Manifest{
-		Component: manifest.Component{
-			Name:   name,
-			Form:   "web-service",
-			Port:   atoi(flags["port"]),
-			Domain: flags["domain"],
-		},
+	if v := flags["form"]; v != "" {
+		c.Form = v
 	}
+	if v := flags["port"]; v != "" {
+		c.Port = atoi(v)
+	}
+	if v := flags["domain"]; v != "" {
+		c.Domain = v
+	}
+	if v := flags["root"]; v != "" {
+		c.Root = v
+	}
+	m := &manifest.Manifest{Component: *c}
 	if err := m.Validate(); err != nil {
 		die("%v", err)
 	}
@@ -166,7 +196,7 @@ func cmdInit(args []string) {
 	if err := os.WriteFile("blob.yaml", b, 0o644); err != nil {
 		die("write blob.yaml: %v", err)
 	}
-	fmt.Println("wrote blob.yaml")
+	fmt.Printf("wrote blob.yaml — %s\n", why)
 }
 
 func cmdLogin(args []string) {
@@ -214,6 +244,7 @@ func componentToReq(app string, c *manifest.Component, env string) *api.DeployRe
 		App:         c.Name,
 		Environment: env,
 		Domain:      c.Domain,
+		Domains:     c.Domains,
 		Port:        c.Port,
 		CPU:         c.CPU,
 		Memory:      c.Memory,
@@ -223,6 +254,11 @@ func componentToReq(app string, c *manifest.Component, env string) *api.DeployRe
 		Schedule:    c.Schedule,
 		Tag:         c.Image,
 		Command:     c.Command,
+		Root:        c.Root,
+		Build:       c.Build,
+		Index:       c.Index,
+		NotFound:    c.NotFound,
+		SPA:         c.SPA,
 	}
 	if app == "" {
 		r.App = c.Name
@@ -575,4 +611,218 @@ func firstNonEmpty(a, b string) string {
 		return a
 	}
 	return b
+}
+
+func cmdRestart(args []string) {
+	flags := parseFlags(args)
+	app := positional(flags, 0)
+	if app == "" {
+		die("usage: blob restart <app>")
+	}
+	c := mustClient()
+	if err := c.Restart(context.Background(), app); err != nil {
+		die("%v", err)
+	}
+	fmt.Println("restarted", app)
+}
+
+func cmdReleases(args []string) {
+	flags := parseFlags(args)
+	app := positional(flags, 0)
+	if app == "" {
+		die("usage: blob releases <app>")
+	}
+	c := mustClient()
+	out, err := c.Releases(context.Background(), app)
+	if err != nil {
+		die("%v", err)
+	}
+	if len(out.Releases) == 0 {
+		fmt.Println("no releases recorded")
+		return
+	}
+	fmt.Printf("%-4s %-50s %s\n", "REV", "IMAGE", "CREATED")
+	for _, r := range out.Releases {
+		img := r.Image
+		if len(img) > 49 {
+			img = "..." + img[len(img)-46:]
+		}
+		fmt.Printf("%-4d %-50s %s\n", r.Revision, img, r.CreatedAt.Format(time.RFC3339))
+	}
+}
+
+func cmdOpen(args []string) {
+	flags := parseFlags(args)
+	app := positional(flags, 0)
+	if app == "" {
+		die("usage: blob open <app>")
+	}
+	c := mustClient()
+	out, err := c.Status(context.Background(), app)
+	if err != nil {
+		die("%v", err)
+	}
+	if out.URL == "" {
+		die("%s has no public URL (form=%s)", app, out.Form)
+	}
+	fmt.Println("opening", out.URL)
+	openURL(out.URL)
+}
+
+func cmdExec(args []string) {
+	// Split args at "--": before is positional [app], after is the command.
+	app := ""
+	var cmd []string
+	seenSep := false
+	for _, a := range args {
+		if a == "--" {
+			seenSep = true
+			continue
+		}
+		if !seenSep {
+			if app == "" {
+				app = a
+			}
+			continue
+		}
+		cmd = append(cmd, a)
+	}
+	if app == "" || len(cmd) == 0 {
+		die("usage: blob exec <app> -- <cmd ...>")
+	}
+	c := mustClient()
+	out, err := c.Exec(context.Background(), app, cmd)
+	if err != nil {
+		die("%v", err)
+	}
+	fmt.Print(out.Output)
+	if out.ExitCode != 0 {
+		os.Exit(out.ExitCode)
+	}
+}
+
+func cmdDomains(args []string) {
+	if len(args) == 0 {
+		die("usage: blob domains attach <app> <host> [--mode MODE]")
+	}
+	switch args[0] {
+	case "attach":
+		flags := parseFlags(args[1:])
+		app := positional(flags, 0)
+		host := positional(flags, 1)
+		mode := flags["mode"]
+		if app == "" || host == "" {
+			die("usage: blob domains attach <app> <host> [--mode platform-base|user-external]")
+		}
+		c := mustClient()
+		out, err := c.AttachDomain(context.Background(), app, host, mode)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("attached %s -> %s\n", out.Host, out.URL)
+		fmt.Println("mode:    ", out.Mode)
+		if len(out.DNSRecords) > 0 {
+			fmt.Println("\nDNS records to create at your registrar:")
+			for _, d := range out.DNSRecords {
+				fmt.Printf("  %s  %s  %s  TTL=%d\n", d.Type, d.Name, d.Value, d.TTL)
+			}
+			fmt.Println("\nThe certificate will issue automatically once the A record resolves to the platform.")
+		}
+	default:
+		die("unknown domains subcommand: %s", args[0])
+	}
+}
+
+func cmdNodes(args []string) {
+	if len(args) == 0 {
+		die("usage: blob nodes <list|drain|undrain|join>")
+	}
+	c := mustClient()
+	switch args[0] {
+	case "list", "ls":
+		out, err := c.ListNodes(context.Background())
+		if err != nil {
+			die("%v", err)
+		}
+		if len(out.Nodes) == 0 {
+			fmt.Println("no nodes")
+			return
+		}
+		fmt.Printf("%-12s %-20s %-15s %-10s %-10s %s\n", "ID", "NAME", "ADDR", "STATUS", "ELIGIBLE", "DC")
+		for _, n := range out.Nodes {
+			id := n.ID
+			if len(id) > 8 {
+				id = id[:8]
+			}
+			elig := n.Eligible
+			if n.Drain {
+				elig = "draining"
+			}
+			fmt.Printf("%-12s %-20s %-15s %-10s %-10s %s\n", id, n.Name, n.Address, n.Status, elig, n.Datacenter)
+		}
+	case "drain":
+		flags := parseFlags(args[1:])
+		id := positional(flags, 0)
+		if id == "" {
+			die("usage: blob nodes drain <id>")
+		}
+		if err := c.DrainNode(context.Background(), id, true); err != nil {
+			die("%v", err)
+		}
+		fmt.Println("draining", id)
+	case "undrain":
+		flags := parseFlags(args[1:])
+		id := positional(flags, 0)
+		if id == "" {
+			die("usage: blob nodes undrain <id>")
+		}
+		if err := c.DrainNode(context.Background(), id, false); err != nil {
+			die("%v", err)
+		}
+		fmt.Println("undrained", id)
+	case "join":
+		out, err := c.JoinScript(context.Background())
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("Run this on the new node (Debian/Ubuntu, root):\n\n")
+		fmt.Println(out.JoinScript)
+		fmt.Printf("# Server address: %s\n", out.Address)
+	default:
+		die("unknown nodes subcommand: %s", args[0])
+	}
+}
+
+func cmdVolumes(args []string) {
+	if len(args) == 0 || args[0] != "list" && args[0] != "ls" {
+		die("usage: blob volumes list")
+	}
+	c := mustClient()
+	out, err := c.ListVolumes(context.Background())
+	if err != nil {
+		die("%v", err)
+	}
+	if len(out.Volumes) == 0 {
+		fmt.Println("no per-app volumes")
+		return
+	}
+	fmt.Printf("%-30s %-20s %s\n", "APP", "VOLUME", "DOCKER NAME")
+	for _, v := range out.Volumes {
+		fmt.Printf("%-30s %-20s %s\n", v.App, v.Name, v.HostName)
+	}
+}
+
+// openURL opens a URL in the user's default browser.
+func openURL(u string) {
+	var cmd []string
+	if _, err := exec.LookPath("open"); err == nil { // macOS
+		cmd = []string{"open", u}
+	} else if _, err := exec.LookPath("xdg-open"); err == nil { // most linux
+		cmd = []string{"xdg-open", u}
+	} else {
+		fmt.Fprintln(os.Stderr, "open: no opener; the URL is:", u)
+		return
+	}
+	c := exec.Command(cmd[0], cmd[1:]...)
+	_ = c.Start()
 }

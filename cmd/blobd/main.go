@@ -13,7 +13,7 @@ import (
 	"github.com/darvell/blob/internal/server"
 )
 
-var version = "0.1.0"
+var version = "0.3.0"
 
 func main() {
 	cfg := server.DefaultConfig()
@@ -24,6 +24,7 @@ func main() {
 	registry := flag.String("registry", envOr("BLOB_REGISTRY", cfg.Registry), "container registry")
 	stateDir := flag.String("state", envOr("BLOB_STATE_DIR", cfg.StateDir), "state dir")
 	creds := flag.String("registry-creds", envOr("BLOB_REGISTRY_CREDS", cfg.RegistryCreds), "registry credentials file")
+	publicIP := flag.String("public-ip", os.Getenv("BLOB_PUBLIC_IP"), "platform public IP (used for user-external DNS instructions)")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
@@ -42,6 +43,7 @@ func main() {
 	cfg.SourcesDir = *stateDir + "/sources"
 	cfg.SecretsDir = *stateDir + "/secrets"
 	cfg.RegistryCreds = *creds
+	cfg.PlatformPublicIP = *publicIP
 
 	for _, d := range []string{cfg.StateDir, cfg.JobsDir, cfg.SourcesDir, cfg.SecretsDir} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
