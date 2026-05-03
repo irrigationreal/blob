@@ -71,7 +71,7 @@ The full v1 spec ([`docs/the-blob-spec.md`](docs/the-blob-spec.md)) is the desti
 - Built-in **observability stack** (Loki/Tempo/Prometheus integration)
 - **Autoscaling** beyond explicit `blob scale`
 - **Off-host backup shipping** (backups today live on the platform host's disk; v0.6 adds `--to s3://...` and scheduled cron)
-- **Cross-app / cross-blob.yaml service users**: today every app binding `services: [my-pg]` shares one role and one database. v0.6 will add per-binding roles + databases so two unrelated `blob.yaml` files can share a Postgres instance with isolated credentials and namespaces
+- **Per-project users on managed services**: today every app binding `services: [my-pg]` shares one role and one database. v0.6 adds `blob postgres project create <instance> <project>` so two unrelated `blob.yaml` files can share a Postgres instance with isolated credentials and per-project databases (`services: [my-pg.payments]` syntax). Same model planned for Valkey via Valkey 8 ACL key-pattern restrictions
 - **Multi-region** active-passive failover
 - **Preview environments** auto-created from CI webhooks
 - **Status pages**, cost rollups, plugins, web console, GPU/confidential compute
