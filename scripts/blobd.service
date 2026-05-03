@@ -1,0 +1,22 @@
+[Unit]
+Description=The Blob control plane (blobd)
+After=network.target docker.service nomad.service
+Wants=docker.service nomad.service
+
+[Service]
+Type=simple
+User=platform
+Group=platform
+EnvironmentFile=/etc/blob/env
+ExecStart=/usr/local/bin/blobd \
+  --listen 127.0.0.1:8787 \
+  --base-domain irrigate.cc \
+  --dc pve \
+  --registry registry.irrigate.cc \
+  --state /srv/blob \
+  --registry-creds /etc/blob/registry-credentials.txt
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

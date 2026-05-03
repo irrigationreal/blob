@@ -1,0 +1,8 @@
+bin/
+dist/
+*.tar.gz
+.DS_Store
+.env
+.env.*
+secrets/
+*.token
