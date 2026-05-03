@@ -89,11 +89,11 @@ func TestRenderJobVolumes(t *testing.T) {
 		Volumes: []api.VolumeMount{{Name: "data", Path: "/var/data"}},
 	}
 	job := renderJob(req, "img:1", 8080, "stateful.example.com", "dc1", "stateful")
-	if !strings.Contains(job, `volume "data"`) {
-		t.Fatalf("expected group-level volume block:\n%s", job)
+	if !strings.Contains(job, `target = "/var/data"`) {
+		t.Fatalf("expected docker mount target:\n%s", job)
 	}
-	if !strings.Contains(job, `destination = "/var/data"`) {
-		t.Fatalf("expected task volume_mount:\n%s", job)
+	if !strings.Contains(job, `type   = "volume"`) {
+		t.Fatalf("expected docker mount type=volume:\n%s", job)
 	}
 	if !strings.Contains(job, `source = "blob-stateful-data"`) {
 		t.Fatalf("expected scoped volume name:\n%s", job)

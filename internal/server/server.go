@@ -64,9 +64,10 @@ func DefaultConfig() Config {
 }
 
 type Server struct {
-	cfg     Config
-	secrets *secrets.Store
-	mu      sync.Mutex
+	cfg       Config
+	secrets   *secrets.Store
+	scheduler *Scheduler
+	mu        sync.Mutex
 }
 
 func New(cfg Config) (*Server, error) {
@@ -74,7 +75,26 @@ func New(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("secrets: %w", err)
 	}
-	return &Server{cfg: cfg, secrets: store}, nil
+	s := &Server{cfg: cfg, secrets: store}
+	s.scheduler = newScheduler(s)
+	s.scheduler.Start()
+	return s, nil
+}
+
+// Close releases resources held by the server (currently the scheduler goroutine).
+func (s *Server) Close() {
+	if s.scheduler != nil {
+		s.scheduler.Stop()
+	}
+}
+
+// removeIgnoringMissing deletes a file, returning nil if the file is already gone.
+func removeIgnoringMissing(path string) error {
+	err := os.Remove(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 func (s *Server) Routes() http.Handler {

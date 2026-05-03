@@ -288,10 +288,14 @@ type PostgresURL struct {
 // Postgres backups
 type PostgresBackup struct {
 	Name      string    `json:"name"`     // postgres instance name
-	Path      string    `json:"path"`     // server-side path to the .sql.gz file
+	Path      string    `json:"path"`     // server-side path to the .sql.gz file (empty if local file was pruned)
 	Filename  string    `json:"filename"` // basename only (UTC-ISO timestamp)
 	BytesSize int64     `json:"bytes_size"`
 	CreatedAt time.Time `json:"created_at"`
+	SHA256    string    `json:"sha256,omitempty"`     // hex of file contents
+	Local     bool      `json:"local"`                // present on the platform host disk
+	Remote    bool      `json:"remote,omitempty"`     // shipped to off-host destination
+	RemoteURL string    `json:"remote_url,omitempty"` // s3://bucket/prefix/filename when shipped
 }
 
 type ListPostgresBackupsResponse struct {
@@ -300,6 +304,7 @@ type ListPostgresBackupsResponse struct {
 
 type RestorePostgresRequest struct {
 	Path  string `json:"path,omitempty"`  // explicit backup path or filename; "" or "latest" picks the newest
+	From  string `json:"from,omitempty"`  // "local" (default) or "s3"; or a full s3://bucket/key URL
 	Force bool   `json:"force,omitempty"` // required when the database is non-empty
 }
 
@@ -334,6 +339,33 @@ type SetPostgresProjectTimeoutRequest struct {
 
 type PostgresProjectURL struct {
 	URL string `json:"url"` // full postgres://<role>:<password>@host:port/<db>
+}
+
+// Off-host backup configuration (per Postgres instance).
+type PostgresBackupConfig struct {
+	Instance         string `json:"instance"`
+	DestinationKind  string `json:"destination_kind"`             // currently only "s3" (S3-compatible incl. MinIO/R2/B2)
+	S3Endpoint       string `json:"s3_endpoint,omitempty"`        // e.g. https://minio.irrigate.cc; empty = AWS public endpoints
+	S3Region         string `json:"s3_region,omitempty"`          // e.g. us-east-1; default us-east-1
+	S3Bucket         string `json:"s3_bucket"`
+	S3Prefix         string `json:"s3_prefix,omitempty"`          // e.g. demo/ ; trailing slash optional
+	S3AccessKeyID    string `json:"s3_access_key_id"`
+	S3SecretAccessKey string `json:"s3_secret_access_key,omitempty"` // never emitted in GET responses; mask via API
+	S3UsePathStyle   bool   `json:"s3_use_path_style,omitempty"`  // MinIO/R2 default true; AWS false
+	Schedule         string `json:"schedule,omitempty"`           // 5-field cron in UTC; default "0 3 * * *"
+	RetentionDaily   int    `json:"retention_daily,omitempty"`    // default 7
+	RetentionWeekly  int    `json:"retention_weekly,omitempty"`   // default 4
+	RetentionMonthly int    `json:"retention_monthly,omitempty"`  // default 6
+	Enabled          bool   `json:"enabled"`
+}
+
+type SetPostgresBackupConfigRequest struct {
+	Config PostgresBackupConfig `json:"config"`
+}
+
+type TestPostgresBackupConfigResponse struct {
+	OK     bool   `json:"ok"`
+	Detail string `json:"detail,omitempty"`
 }
 
 // Managed services — Valkey

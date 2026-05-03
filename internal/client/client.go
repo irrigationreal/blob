@@ -304,6 +304,41 @@ func (c *Client) RestorePostgres(ctx context.Context, name, path string, force b
 	return c.do(ctx, "POST", "/v1/postgres/"+url.PathEscape(name)+"/restore", &api.RestorePostgresRequest{Path: path, Force: force}, nil)
 }
 
+func (c *Client) RestorePostgresFrom(ctx context.Context, name, path, from string, force bool) error {
+	return c.do(ctx, "POST", "/v1/postgres/"+url.PathEscape(name)+"/restore", &api.RestorePostgresRequest{Path: path, From: from, Force: force}, nil)
+}
+
+// --- managed services: postgres backup-config (off-host shipping) ---
+
+func (c *Client) GetPostgresBackupConfig(ctx context.Context, instance string) (*api.PostgresBackupConfig, error) {
+	out := &api.PostgresBackupConfig{}
+	if err := c.do(ctx, "GET", "/v1/postgres/"+url.PathEscape(instance)+"/backup-config", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) SetPostgresBackupConfig(ctx context.Context, cfg *api.PostgresBackupConfig) (*api.PostgresBackupConfig, error) {
+	out := &api.PostgresBackupConfig{}
+	req := &api.SetPostgresBackupConfigRequest{Config: *cfg}
+	if err := c.do(ctx, "PUT", "/v1/postgres/"+url.PathEscape(cfg.Instance)+"/backup-config", req, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) ClearPostgresBackupConfig(ctx context.Context, instance string) error {
+	return c.do(ctx, "DELETE", "/v1/postgres/"+url.PathEscape(instance)+"/backup-config", nil, nil)
+}
+
+func (c *Client) TestPostgresBackupConfig(ctx context.Context, instance string) (*api.TestPostgresBackupConfigResponse, error) {
+	out := &api.TestPostgresBackupConfigResponse{}
+	if err := c.do(ctx, "POST", "/v1/postgres/"+url.PathEscape(instance)+"/backup-config/test", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // --- managed services: postgres projects (per-tenant role + database) ---
 
 func (c *Client) ListPostgresProjects(ctx context.Context, instance string) (*api.ListPostgresProjectsResponse, error) {

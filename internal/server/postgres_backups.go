@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -39,9 +40,20 @@ func (s *Server) runningPostgresAlloc(ctx context.Context, name string) (string,
 	return "", errors.New("no running postgres allocation")
 }
 
-// backupPostgres runs pg_dumpall inside the running postgres container,
-// gzips the output, and writes it to /srv/blob/backups/postgres/<name>/<UTC-ISO>.sql.gz.
+// backupPostgres runs pg_dump inside the running postgres container, gzips
+// the output, and writes it to /srv/blob/backups/postgres/<name>/<UTC-ISO>.sql.gz.
+// If a backup-config exists and is enabled, it ALSO ships to the remote.
 func (s *Server) backupPostgres(ctx context.Context, name string) (*api.PostgresBackup, error) {
+	cfg, _ := s.loadBackupConfig(name)
+	if cfg != nil && !cfg.Enabled {
+		cfg = nil
+	}
+	return s.backupPostgresWithShipping(ctx, name, cfg)
+}
+
+// backupPostgresWithShipping does the dump + (optional) ship in one go.
+// Used by both the on-demand handler and the scheduler.
+func (s *Server) backupPostgresWithShipping(ctx context.Context, name string, cfg *api.PostgresBackupConfig) (*api.PostgresBackup, error) {
 	m, err := s.loadPostgres(name)
 	if err != nil {
 		return nil, errors.New("no such postgres")
@@ -58,7 +70,6 @@ func (s *Server) backupPostgres(ctx context.Context, name string) (*api.Postgres
 	filename := stamp + ".sql.gz"
 	full := filepath.Join(dir, filename)
 
-	// Pipe: nomad alloc exec <id> pg_dump --clean --if-exists --create -d <db> | gzip > full
 	dumpCmd := exec.CommandContext(ctx,
 		"nomad", "alloc", "exec",
 		"-i=false", "-t=false",
@@ -73,7 +84,6 @@ func (s *Server) backupPostgres(ctx context.Context, name string) (*api.Postgres
 	)
 	gzCmd := exec.CommandContext(ctx, "gzip", "-c")
 
-	// Wire stdout(dump) -> stdin(gz); gzCmd.stdout -> file
 	pr, pw := iopipe()
 	dumpCmd.Stdout = pw
 	dumpCmd.Stderr = os.Stderr
@@ -95,7 +105,7 @@ func (s *Server) backupPostgres(ctx context.Context, name string) (*api.Postgres
 		_ = gzCmd.Wait()
 		out.Close()
 		_ = os.Remove(full)
-		return nil, fmt.Errorf("pg_dumpall: %w", err)
+		return nil, fmt.Errorf("pg_dump: %w", err)
 	}
 	if err := pw.Close(); err != nil {
 		_ = gzCmd.Wait()
@@ -116,46 +126,97 @@ func (s *Server) backupPostgres(ctx context.Context, name string) (*api.Postgres
 	if err != nil {
 		return nil, err
 	}
-	return &api.PostgresBackup{
+	bk := &api.PostgresBackup{
 		Name:      name,
 		Path:      full,
 		Filename:  filename,
 		BytesSize: st.Size(),
 		CreatedAt: st.ModTime(),
-	}, nil
+		Local:     true,
+	}
+	if hash, err := sha256File(full); err == nil {
+		bk.SHA256 = hex.EncodeToString(hash)
+	}
+
+	// Ship if a config exists and is enabled.
+	if cfg != nil && cfg.Enabled {
+		remoteURL, sha, err := s.shipBackup(ctx, cfg, full)
+		if err != nil {
+			// Don't fail the whole operation — local backup succeeded. Surface
+			// in logs and keep the local file.
+			stdLog("backup ship failed for %s: %v", name, err)
+		} else {
+			bk.Remote = true
+			bk.RemoteURL = remoteURL
+			if bk.SHA256 == "" {
+				bk.SHA256 = sha
+			}
+		}
+	}
+	return bk, nil
 }
 
 // listPostgresBackups returns existing backup files for the named instance,
-// newest first.
+// newest first. Merges local files and (when configured + enabled) remote
+// files in the off-host destination so the operator sees one unified view.
 func (s *Server) listPostgresBackups(name string) (*api.ListPostgresBackupsResponse, error) {
 	if _, err := s.loadPostgres(name); err != nil {
 		return nil, errors.New("no such postgres")
 	}
 	dir := s.postgresBackupsDir(name)
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return &api.ListPostgresBackupsResponse{}, nil
+	byName := map[string]*api.PostgresBackup{}
+	if entries, err := os.ReadDir(dir); err == nil {
+		for _, e := range entries {
+			if !strings.HasSuffix(e.Name(), ".sql.gz") {
+				continue
+			}
+			full := filepath.Join(dir, e.Name())
+			st, err := os.Stat(full)
+			if err != nil {
+				continue
+			}
+			byName[e.Name()] = &api.PostgresBackup{
+				Name:      name,
+				Path:      full,
+				Filename:  e.Name(),
+				BytesSize: st.Size(),
+				CreatedAt: st.ModTime(),
+				Local:     true,
+			}
+			if hash, err := sha256File(full); err == nil {
+				byName[e.Name()].SHA256 = hex.EncodeToString(hash)
+			}
 		}
+	} else if !os.IsNotExist(err) {
 		return nil, err
 	}
+	// Merge remote.
+	if cfg, err := s.loadBackupConfig(name); err == nil && cfg.Enabled {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if remote, err := s.listRemoteBackups(ctx, cfg); err == nil {
+			for fn, size := range remote {
+				if existing, ok := byName[fn]; ok {
+					existing.Remote = true
+					existing.RemoteURL = fmt.Sprintf("s3://%s/%s%s", cfg.S3Bucket, cfg.S3Prefix, fn)
+				} else {
+					t, _ := parseBackupTime(fn)
+					byName[fn] = &api.PostgresBackup{
+						Name:      name,
+						Filename:  fn,
+						BytesSize: size,
+						CreatedAt: t,
+						Local:     false,
+						Remote:    true,
+						RemoteURL: fmt.Sprintf("s3://%s/%s%s", cfg.S3Bucket, cfg.S3Prefix, fn),
+					}
+				}
+			}
+		}
+	}
 	out := &api.ListPostgresBackupsResponse{}
-	for _, e := range entries {
-		if !strings.HasSuffix(e.Name(), ".sql.gz") {
-			continue
-		}
-		full := filepath.Join(dir, e.Name())
-		st, err := os.Stat(full)
-		if err != nil {
-			continue
-		}
-		out.Backups = append(out.Backups, api.PostgresBackup{
-			Name:      name,
-			Path:      full,
-			Filename:  e.Name(),
-			BytesSize: st.Size(),
-			CreatedAt: st.ModTime(),
-		})
+	for _, b := range byName {
+		out.Backups = append(out.Backups, *b)
 	}
 	sort.Slice(out.Backups, func(i, j int) bool {
 		return out.Backups[i].CreatedAt.After(out.Backups[j].CreatedAt)
@@ -163,21 +224,28 @@ func (s *Server) listPostgresBackups(name string) (*api.ListPostgresBackupsRespo
 	return out, nil
 }
 
-// restorePostgres pipes a gzipped pg_dumpall back into the running container's psql.
-// The backup's `--clean --if-exists` directives drop and recreate objects; this
-// is the round-trip semantics the docs promise.
-func (s *Server) restorePostgres(ctx context.Context, name, pathOrAlias string, force bool) error {
+// restorePostgres pipes a gzipped pg_dump back into the running container's psql.
+// The backup's `--clean --if-exists --create` directives drop and recreate the
+// database, so the round-trip is exact.
+//
+// `from` controls where to fetch the backup:
+//   - "" or "local": local file under /srv/blob/backups/postgres/<name>/
+//   - "s3": pull from the configured remote (must be enabled). path is the filename.
+//   - "s3://bucket/key": pull directly from a fully-qualified S3 URL,
+//     using the instance's backup-config credentials/endpoint.
+func (s *Server) restorePostgres(ctx context.Context, name, pathOrAlias, from string, force bool) error {
 	m, err := s.loadPostgres(name)
 	if err != nil {
 		return errors.New("no such postgres")
 	}
-	resolved, err := s.resolveBackupPath(name, pathOrAlias)
+	resolved, cleanup, err := s.materializeBackup(ctx, name, pathOrAlias, from)
 	if err != nil {
 		return err
 	}
+	if cleanup != nil {
+		defer cleanup()
+	}
 	if !force {
-		// Sanity: refuse if database already has tables. The "drop existing
-		// then restore" flow is intentional but we want the operator to opt in.
 		if has, _ := s.postgresDatabaseHasTables(ctx, m); has {
 			return errors.New("database is non-empty; pass --force to overwrite (or `blob postgres connect` and DROP first)")
 		}
@@ -188,8 +256,6 @@ func (s *Server) restorePostgres(ctx context.Context, name, pathOrAlias string, 
 	}
 
 	gzCmd := exec.CommandContext(ctx, "gunzip", "-c", resolved)
-	// Connect to the maintenance "postgres" database so the dump's
-	// DROP DATABASE / CREATE DATABASE statements can run against the target.
 	psqlCmd := exec.CommandContext(ctx,
 		"nomad", "alloc", "exec",
 		"-i=true", "-t=false",
@@ -220,6 +286,100 @@ func (s *Server) restorePostgres(ctx context.Context, name, pathOrAlias string, 
 		return fmt.Errorf("psql restore: %w", err)
 	}
 	return nil
+}
+
+// materializeBackup returns a path on local disk that the restore path can
+// gunzip + pipe into psql. For local sources, this is just the existing file.
+// For S3 sources, it downloads to a temp file under the instance's backups dir
+// and returns a cleanup that removes the temp file.
+func (s *Server) materializeBackup(ctx context.Context, instance, pathOrAlias, from string) (resolved string, cleanup func(), err error) {
+	switch {
+	case from == "" || from == "local":
+		p, err := s.resolveBackupPath(instance, pathOrAlias)
+		if err != nil {
+			return "", nil, err
+		}
+		return p, nil, nil
+	case from == "s3":
+		cfg, err := s.loadBackupConfig(instance)
+		if err != nil {
+			return "", nil, errors.New("no backup-config for instance; cannot restore --from s3")
+		}
+		if !cfg.Enabled {
+			return "", nil, errors.New("backup-config is disabled; cannot restore --from s3")
+		}
+		filename, err := s.resolveRemoteBackupName(ctx, cfg, pathOrAlias)
+		if err != nil {
+			return "", nil, err
+		}
+		key := cfg.S3Prefix + filename
+		tmp := filepath.Join(s.postgresBackupsDir(instance), ".restore-"+filename)
+		if err := os.MkdirAll(filepath.Dir(tmp), 0o700); err != nil {
+			return "", nil, err
+		}
+		if err := s.downloadRemoteBackup(ctx, cfg, key, tmp); err != nil {
+			_ = os.Remove(tmp)
+			return "", nil, fmt.Errorf("download %s: %w", key, err)
+		}
+		return tmp, func() { _ = os.Remove(tmp) }, nil
+	case strings.HasPrefix(from, "s3://"):
+		// Full URL: extract bucket and key, but reuse the instance's creds.
+		rest := strings.TrimPrefix(from, "s3://")
+		i := strings.IndexByte(rest, '/')
+		if i <= 0 {
+			return "", nil, errors.New("invalid s3 URL; expected s3://bucket/key")
+		}
+		cfg, err := s.loadBackupConfig(instance)
+		if err != nil {
+			return "", nil, errors.New("no backup-config for instance; cannot use s3:// URL without credentials")
+		}
+		// Override bucket/key for this one call.
+		override := *cfg
+		override.S3Bucket = rest[:i]
+		key := rest[i+1:]
+		filename := lastPathComponent(key)
+		tmp := filepath.Join(s.postgresBackupsDir(instance), ".restore-"+filename)
+		if err := os.MkdirAll(filepath.Dir(tmp), 0o700); err != nil {
+			return "", nil, err
+		}
+		if err := s.downloadRemoteBackup(ctx, &override, key, tmp); err != nil {
+			_ = os.Remove(tmp)
+			return "", nil, fmt.Errorf("download %s: %w", from, err)
+		}
+		return tmp, func() { _ = os.Remove(tmp) }, nil
+	default:
+		return "", nil, fmt.Errorf("unknown --from %q (expected local | s3 | s3://bucket/key)", from)
+	}
+}
+
+func (s *Server) resolveRemoteBackupName(ctx context.Context, cfg *api.PostgresBackupConfig, pathOrAlias string) (string, error) {
+	if pathOrAlias != "" && pathOrAlias != "latest" {
+		return pathOrAlias, nil
+	}
+	remote, err := s.listRemoteBackups(ctx, cfg)
+	if err != nil {
+		return "", err
+	}
+	if len(remote) == 0 {
+		return "", errors.New("no remote backups exist for this instance")
+	}
+	// Pick the one with the newest UTC-ISO timestamp in the filename.
+	var newest string
+	var newestT time.Time
+	for n := range remote {
+		t, err := parseBackupTime(n)
+		if err != nil {
+			continue
+		}
+		if newest == "" || t.After(newestT) {
+			newest = n
+			newestT = t
+		}
+	}
+	if newest == "" {
+		return "", errors.New("no parseable remote backups")
+	}
+	return newest, nil
 }
 
 // resolveBackupPath turns a user-supplied path/filename/alias into an absolute
@@ -295,7 +455,7 @@ func (s *Server) handlePostgresRestore(w http.ResponseWriter, r *http.Request, n
 		writeErr(w, 400, err.Error())
 		return
 	}
-	if err := s.restorePostgres(r.Context(), name, req.Path, req.Force); err != nil {
+	if err := s.restorePostgres(r.Context(), name, req.Path, req.From, req.Force); err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}

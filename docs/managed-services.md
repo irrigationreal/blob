@@ -86,8 +86,59 @@ Verified end-to-end as part of v0.5 ship: insert a sentinel row → backup → d
 
 #### What backups don't include yet
 
-- **Project-owned databases** (`my-pg.payments` etc.) are NOT in the per-instance backup. Backups currently only cover the instance's superuser-owned database. v0.7 will iterate all project databases on the instance and back each separately.
-- Off-host shipping. The backup file lives on the platform host's disk under `/srv/blob/backups/`. v0.7 will add `--to s3://...` and a scheduled cron. Until then: rsync `/srv/blob/backups/postgres/<name>/` to a destination of your choice.
+- **Project-owned databases** (`my-pg.payments` etc.) are NOT in the per-instance backup. Backups currently only cover the instance's superuser-owned database. A future release will iterate all project databases on the instance and back each separately.
+
+### Off-host backup shipping (v0.7)
+
+Postgres backups can be shipped to any S3-compatible object store (AWS S3, Cloudflare R2, Backblaze B2, MinIO, Wasabi). Configure once; the in-process scheduler then dumps + uploads on a cron and applies retention.
+
+```sh
+# Configure the destination (server-side; secret key stored at /srv/blob/postgres/<name>/backup-config.json mode 0600)
+blob postgres backup-config set my-pg \
+  --s3-endpoint http://65.21.9.22:30149 \
+  --s3-region us-east-1 \
+  --s3-bucket blob-backups \
+  --s3-prefix my-pg/ \
+  --s3-access-key-id <KEY> \
+  --s3-secret-access-key <SECRET> \
+  --s3-use-path-style \
+  --schedule "0 3 * * *" \
+  --retention-daily 7 --retention-weekly 4 --retention-monthly 6 \
+  --enable
+
+blob postgres backup-config get my-pg     # secret key shown as ***
+blob postgres backup-config test my-pg    # HEAD bucket round-trip
+blob postgres backup-config clear my-pg
+
+# `blob postgres backup` now ships in addition to writing locally; a `.sha256` sidecar is uploaded alongside each `.sql.gz`.
+blob postgres backup my-pg
+blob postgres backups my-pg     # unified view: LOCAL/REMOTE columns + sha256
+
+# Restore from the remote without first downloading
+blob postgres restore my-pg latest --from s3 --force
+blob postgres restore my-pg s3://blob-backups/my-pg/2026-05-03T20-08-46Z.sql.gz --force
+```
+
+#### Schedule and retention
+
+- Schedule is a 5-field cron expression in UTC, evaluated by an in-process loop in `blobd`. Examples: `0 3 * * *` (daily 03:00 UTC), `*/5 * * * *` (every 5 min for testing).
+- Retention is the **union** of three buckets:
+  - `daily=N` keeps the newest backup per UTC date for the most recent N dates
+  - `weekly=N` keeps the newest backup per ISO year-week for the most recent N weeks
+  - `monthly=N` keeps the newest backup per year-month for the most recent N months
+- A backup that is the newest in any bucket is kept. Anything outside all buckets is deleted from BOTH local and remote on the next cycle. Filenames not matching the `YYYY-MM-DDTHH-MM-SSZ.sql.gz` template are always kept (defensive).
+
+#### Behind a reverse proxy (Cloudflare, etc.)
+
+If the S3-compatible endpoint is fronted by Cloudflare or another proxy that normalizes headers, AWS SigV4 will fail with `SignatureDoesNotMatch` for `PutObject` (the Go SDK signs `Accept-Encoding`/`Content-Type` etc., which proxies often rewrite). Point the endpoint at the origin host directly (e.g. via the Nomad-allocated port for a self-hosted MinIO, a private VPC endpoint for AWS, or a "DNS only" subdomain) and the issue disappears.
+
+#### Recursive dogfood (v0.7 ship verification)
+
+The platform backs itself up to itself: a MinIO instance is deployed as a Blob app at `~/code/blob-dogfood/blob-minio/`, and the demo Postgres ships its dumps to `s3://blob-backups/demo/` on that same MinIO. End-to-end:
+
+1. Plant a sentinel row, force a backup → file lands locally AND in MinIO with matching sha256.
+2. Drop the table, delete all local backup files, `restore --from s3` → sentinel row reappears.
+3. With `*/2 * * * *` schedule and `daily=3`, six backups accumulate over 12 minutes → only three survive in BOTH local and MinIO after the next prune cycle.
 
 ### Per-project users (v0.6)
 

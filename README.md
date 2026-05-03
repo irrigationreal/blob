@@ -48,6 +48,7 @@ Plus an example with a custom domain attached: <https://static.darv.ai/> (same b
 | **Managed Postgres** with `services:` env injection (`DATABASE_URL`) | shipped  |
 | **Per-project Postgres users** (`services: [<instance>.<project>]`) with isolated role + database + per-project `statement_timeout` | shipped  |
 | **Postgres backups** (`blob postgres backup/backups/restore`) | shipped  |
+| **Off-host backup shipping** to S3-compatible stores + scheduled cron + retention | shipped  |
 | **Managed Valkey** (Redis-compatible) with `services:` env injection (`REDIS_URL`) | shipped  |
 | **Custom domains** with `blob domains attach` (auto-HTTPS)     | shipped  |
 | **Multiple hostnames** per app                                 | shipped  |
@@ -71,7 +72,6 @@ The full v1 spec ([`docs/the-blob-spec.md`](docs/the-blob-spec.md)) is the desti
 - Resource graph + manifest projection-hash drift detection
 - Built-in **observability stack** (Loki/Tempo/Prometheus integration)
 - **Autoscaling** beyond explicit `blob scale`
-- **Off-host backup shipping** (backups today live on the platform host's disk; v0.7 adds `--to s3://...` and scheduled cron)
 - **Multi-region** active-passive failover
 - **Preview environments** auto-created from CI webhooks
 - **Status pages**, cost rollups, plugins, web console, GPU/confidential compute

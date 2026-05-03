@@ -213,19 +213,20 @@ func renderEnvBlock(env map[string]string, secrets []api.SecretBinding) string {
 	return sb.String()
 }
 
-// renderVolumes produces (group-level volume blocks, task-level volume_mount blocks)
-// for Docker named volumes scoped to the workload.
+// renderVolumes produces (unused group-level block, task-config-level mount blocks)
+// for Docker named volumes scoped to the workload. Uses docker driver's `mount`
+// stanza directly so no Nomad host_volume registration is required (matches
+// postgres/valkey semantics — works on a fresh node out of the box).
 func renderVolumes(vols []api.VolumeMount, namespacedID string) (string, string) {
 	if len(vols) == 0 {
 		return "", ""
 	}
-	var groupSB, taskSB strings.Builder
+	var taskSB strings.Builder
 	for _, v := range vols {
-		hostName := fmt.Sprintf("blob-%s-%s", namespacedID, v.Name)
-		fmt.Fprintf(&groupSB, "    volume %q {\n      type   = \"host\"\n      source = %q\n      read_only = false\n    }\n", v.Name, hostName)
-		fmt.Fprintf(&taskSB, "      volume_mount {\n        volume      = %q\n        destination = %q\n        read_only   = false\n      }\n", v.Name, v.Path)
+		dockerVol := fmt.Sprintf("blob-%s-%s", namespacedID, v.Name)
+		fmt.Fprintf(&taskSB, "        mount {\n          type   = \"volume\"\n          target = %q\n          source = %q\n          readonly = false\n        }\n", v.Path, dockerVol)
 	}
-	return groupSB.String(), taskSB.String()
+	return "", taskSB.String()
 }
 
 // renderSidecars returns extra `task` blocks for a Bundle.

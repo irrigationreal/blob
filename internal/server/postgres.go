@@ -159,6 +159,10 @@ func (s *Server) handlePostgresItem(w http.ResponseWriter, r *http.Request) {
 		s.handlePostgresBackupsList(w, r, name)
 	case len(parts) == 2 && parts[1] == "restore" && r.Method == "POST":
 		s.handlePostgresRestore(w, r, name)
+	case len(parts) == 2 && parts[1] == "backup-config":
+		s.handlePostgresBackupConfig(w, r, name)
+	case len(parts) == 2 && parts[1] == "backup-config/test":
+		s.handlePostgresBackupConfigTest(w, r, name)
 	case len(parts) == 2 && parts[1] == "projects":
 		// /v1/postgres/<instance>/projects (GET list, POST create)
 		s.handlePostgresProjects(w, r, name)

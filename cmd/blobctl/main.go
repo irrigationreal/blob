@@ -77,7 +77,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.6.0"
+var version = "0.7.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -982,27 +982,38 @@ func cmdPostgres(args []string) {
 			fmt.Printf("no backups for %s yet — try `blob postgres backup %s`\n", name, name)
 			return
 		}
-		fmt.Printf("%-32s %-10s %s\n", "FILENAME", "SIZE", "CREATED")
+		fmt.Printf("%-32s %-10s %-7s %-7s %-12s %s\n", "FILENAME", "SIZE", "LOCAL", "REMOTE", "SHA256", "CREATED")
 		for _, b := range out.Backups {
-			fmt.Printf("%-32s %-10s %s\n", b.Filename, humanBytes(b.BytesSize), b.CreatedAt.Format(time.RFC3339))
+			where := func(ok bool) string { if ok { return "yes" }; return "no" }
+			short := b.SHA256
+			if len(short) > 12 { short = short[:12] }
+			fmt.Printf("%-32s %-10s %-7s %-7s %-12s %s\n", b.Filename, humanBytes(b.BytesSize), where(b.Local), where(b.Remote), short, b.CreatedAt.Format(time.RFC3339))
 		}
 	case "restore":
 		flags := parseFlags(args[1:])
 		name := positional(flags, 0)
 		if name == "" {
-			die("usage: blob postgres restore <name> [path|latest] [--force]")
+			die("usage: blob postgres restore <name> [path|latest] [--force] [--from local|s3|s3://bucket/key]")
 		}
 		path := positional(flags, 1)
 		if path == "" {
 			path = "latest"
 		}
 		force := flags["force"] == "true"
-		fmt.Printf("restoring %s from %s%s...\n", name, path, ternary(force, " (force)", ""))
+		from := flags["from"]
+		fromLabel := ""
+		if from != "" && from != "local" {
+			fromLabel = " from " + from
+		}
+		fmt.Printf("restoring %s from %s%s%s...\n", name, path, fromLabel, ternary(force, " (force)", ""))
 		t0 := time.Now()
-		if err := c.RestorePostgres(context.Background(), name, path, force); err != nil {
+		if err := c.RestorePostgresFrom(context.Background(), name, path, from, force); err != nil {
 			die("%v", err)
 		}
 		fmt.Printf("restored in %s\n", time.Since(t0).Round(100*time.Millisecond))
+	case "backup-config":
+		cmdPostgresBackupConfig(args[1:])
+		return
 	case "project", "projects":
 		cmdPostgresProject(args[1:])
 		return
@@ -1227,4 +1238,126 @@ func cmdValkey(args []string) {
 	default:
 		die("unknown valkey subcommand: %s", args[0])
 	}
+}
+
+// cmdPostgresBackupConfig handles `blob postgres backup-config <get|set|test|clear> <instance>`.
+func cmdPostgresBackupConfig(args []string) {
+	if len(args) == 0 {
+		die("usage: blob postgres backup-config <get|set|test|clear> <instance>")
+	}
+	c := mustClient()
+	switch args[0] {
+	case "get":
+		flags := parseFlags(args[1:])
+		instance := positional(flags, 0)
+		if instance == "" {
+			die("usage: blob postgres backup-config get <instance>")
+		}
+		cfg, err := c.GetPostgresBackupConfig(context.Background(), instance)
+		if err != nil {
+			die("%v", err)
+		}
+		printBackupConfig(cfg)
+	case "set":
+		flags := parseFlags(args[1:])
+		instance := positional(flags, 0)
+		if instance == "" {
+			die("usage: blob postgres backup-config set <instance> [flags]")
+		}
+		// Start from the existing config so partial updates work.
+		cur, _ := c.GetPostgresBackupConfig(context.Background(), instance)
+		cfg := &api.PostgresBackupConfig{Instance: instance}
+		if cur != nil {
+			cfg = cur
+			cfg.Instance = instance
+		}
+		if v := flags["s3-endpoint"]; v != "" {
+			cfg.S3Endpoint = v
+		}
+		if v := flags["s3-region"]; v != "" {
+			cfg.S3Region = v
+		}
+		if v := flags["s3-bucket"]; v != "" {
+			cfg.S3Bucket = v
+		}
+		if v, ok := flags["s3-prefix"]; ok {
+			cfg.S3Prefix = v
+		}
+		if v := flags["s3-access-key-id"]; v != "" {
+			cfg.S3AccessKeyID = v
+		}
+		if v := flags["s3-secret-access-key"]; v != "" {
+			cfg.S3SecretAccessKey = v
+		}
+		if v := flags["s3-use-path-style"]; v == "true" {
+			cfg.S3UsePathStyle = true
+		}
+		if v := flags["schedule"]; v != "" {
+			cfg.Schedule = v
+		}
+		if v := flags["retention-daily"]; v != "" {
+			cfg.RetentionDaily = atoi(v)
+		}
+		if v := flags["retention-weekly"]; v != "" {
+			cfg.RetentionWeekly = atoi(v)
+		}
+		if v := flags["retention-monthly"]; v != "" {
+			cfg.RetentionMonthly = atoi(v)
+		}
+		if flags["enable"] == "true" {
+			cfg.Enabled = true
+		}
+		if flags["disable"] == "true" {
+			cfg.Enabled = false
+		}
+		out, err := c.SetPostgresBackupConfig(context.Background(), cfg)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Println("backup-config updated:")
+		printBackupConfig(out)
+	case "test":
+		flags := parseFlags(args[1:])
+		instance := positional(flags, 0)
+		if instance == "" {
+			die("usage: blob postgres backup-config test <instance>")
+		}
+		out, err := c.TestPostgresBackupConfig(context.Background(), instance)
+		if err != nil {
+			die("%v", err)
+		}
+		if out.OK {
+			fmt.Println("ok:", out.Detail)
+		} else {
+			fmt.Fprintln(os.Stderr, "FAIL:", out.Detail)
+			os.Exit(1)
+		}
+	case "clear":
+		flags := parseFlags(args[1:])
+		instance := positional(flags, 0)
+		if instance == "" {
+			die("usage: blob postgres backup-config clear <instance>")
+		}
+		if err := c.ClearPostgresBackupConfig(context.Background(), instance); err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("cleared backup-config for %s\n", instance)
+	default:
+		die("unknown backup-config subcommand: %s", args[0])
+	}
+}
+
+func printBackupConfig(c *api.PostgresBackupConfig) {
+	fmt.Printf("  instance:           %s\n", c.Instance)
+	fmt.Printf("  enabled:            %t\n", c.Enabled)
+	fmt.Printf("  destination_kind:   %s\n", c.DestinationKind)
+	fmt.Printf("  s3_endpoint:        %s\n", c.S3Endpoint)
+	fmt.Printf("  s3_region:          %s\n", c.S3Region)
+	fmt.Printf("  s3_bucket:          %s\n", c.S3Bucket)
+	fmt.Printf("  s3_prefix:          %s\n", c.S3Prefix)
+	fmt.Printf("  s3_access_key_id:   %s\n", c.S3AccessKeyID)
+	fmt.Printf("  s3_secret_access_key: %s\n", c.S3SecretAccessKey)
+	fmt.Printf("  s3_use_path_style:  %t\n", c.S3UsePathStyle)
+	fmt.Printf("  schedule:           %s (UTC)\n", c.Schedule)
+	fmt.Printf("  retention:          daily=%d weekly=%d monthly=%d\n", c.RetentionDaily, c.RetentionWeekly, c.RetentionMonthly)
 }
