@@ -46,6 +46,8 @@ Plus an example with a custom domain attached: <https://static.darv.ai/> (same b
 | **Secrets**: AES-256-GCM at rest, per-environment, env injection | shipped |
 | **Environments** (`prod`, `staging`, `pr-1234`, …)             | shipped  |
 | **Managed Postgres** with `services:` env injection (`DATABASE_URL`) | shipped  |
+| **Postgres backups** (`blob postgres backup/backups/restore`) | shipped  |
+| **Managed Valkey** (Redis-compatible) with `services:` env injection (`REDIS_URL`) | shipped  |
 | **Custom domains** with `blob domains attach` (auto-HTTPS)     | shipped  |
 | **Multiple hostnames** per app                                 | shipped  |
 | **Scaling** (`blob scale`)                                     | shipped  |
@@ -62,18 +64,19 @@ Plus an example with a custom domain attached: <https://static.darv.ai/> (same b
 
 ## What the spec describes that's not yet here
 
-The full v1 spec ([`docs/the-blob-spec.md`](docs/the-blob-spec.md)) is the destination. The runtime ships the deploy core and operability surfaces. Honest gap list:
+The full v1 spec ([`docs/the-blob-spec.md`](docs/the-blob-spec.md)) is the destination. The runtime ships the deploy core, operability surfaces, and the first managed services. Honest gap list:
 
 - Kata microVMs, blebs warm pool, hot journal volumes, rewind
 - Resource graph + manifest projection-hash drift detection
 - Built-in **observability stack** (Loki/Tempo/Prometheus integration)
 - **Autoscaling** beyond explicit `blob scale`
-- **Backups + PITR** for managed services and Volumes (Velero-style)
+- **Off-host backup shipping** (backups today live on the platform host's disk; v0.6 adds `--to s3://...` and scheduled cron)
+- **Cross-app / cross-blob.yaml service users**: today every app binding `services: [my-pg]` shares one role and one database. v0.6 will add per-binding roles + databases so two unrelated `blob.yaml` files can share a Postgres instance with isolated credentials and namespaces
 - **Multi-region** active-passive failover
-- **Preview environments** auto-created from CI webhooks (the *Environment* primitive is in `blob.yaml`; the CI webhook glue isn't)
+- **Preview environments** auto-created from CI webhooks
 - **Status pages**, cost rollups, plugins, web console, GPU/confidential compute
 - Importers beyond Dockerfile/Compose: Helm, Heroku/Procfile, Render, Vercel/Netlify, Fly, Nix flakes
-- Managed-service catalog (CloudNativePG, Valkey, NATS, ScyllaDB) — runs on Nomad today but is not a first-class `ManagedService` primitive yet
+- Other managed services: NATS, ScyllaDB, ClickHouse
 
 ## Setting up your own Blob
 
@@ -200,7 +203,15 @@ blob postgres list
 blob postgres create <name> [--version V] [--database D]
 blob postgres url <name>
 blob postgres connect <name>
+blob postgres backup <name>
+blob postgres backups <name>
+blob postgres restore <name> [path|latest] [--force]
 blob postgres destroy <name> [--yes]
+
+blob valkey list
+blob valkey create <name> [--version V]
+blob valkey url <name>
+blob valkey destroy <name> [--yes]
 
 blob nodes list
 blob nodes drain <id>

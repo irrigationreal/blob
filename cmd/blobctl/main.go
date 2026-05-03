@@ -57,13 +57,21 @@ Usage:
   blob postgres create <name> [--version V] [--database D]
   blob postgres url <name>                        Print full DATABASE_URL (with password)
   blob postgres connect <name>                    Open a psql shell using the live DSN
+  blob postgres backup <name>                     Snapshot to /srv/blob/backups/postgres/<name>/<UTC>.sql.gz
+  blob postgres backups <name>                    List existing backups
+  blob postgres restore <name> [path|latest] [--force]
   blob postgres destroy <name> [--yes]
+
+  blob valkey list
+  blob valkey create <name> [--version V]
+  blob valkey url <name>                          Print full REDIS_URL (with password)
+  blob valkey destroy <name> [--yes]
 
   blob whoami                                     Test connection
   blob version                                    Print version
 `
 
-var version = "0.4.0"
+var version = "0.5.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -111,6 +119,8 @@ func main() {
 		cmdSecrets(args)
 	case "postgres", "pg":
 		cmdPostgres(args)
+	case "valkey", "redis":
+		cmdValkey(args)
 	case "doctor":
 		cmdDoctor()
 	case "whoami":
@@ -936,7 +946,155 @@ func cmdPostgres(args []string) {
 			die("%v", err)
 		}
 		fmt.Printf("destroyed postgres %q (Docker volume blob-pg-%s preserved)\n", name, name)
+	case "backup":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob postgres backup <name>")
+		}
+		fmt.Printf("snapshotting %s via pg_dump...\n", name)
+		t0 := time.Now()
+		out, err := c.BackupPostgres(context.Background(), name)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("backed up in %s\n", time.Since(t0).Round(100*time.Millisecond))
+		fmt.Printf("  path:  %s\n", out.Path)
+		fmt.Printf("  size:  %s\n", humanBytes(out.BytesSize))
+		fmt.Printf("  when:  %s\n", out.CreatedAt.Format(time.RFC3339))
+	case "backups":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob postgres backups <name>")
+		}
+		out, err := c.ListPostgresBackups(context.Background(), name)
+		if err != nil {
+			die("%v", err)
+		}
+		if len(out.Backups) == 0 {
+			fmt.Printf("no backups for %s yet — try `blob postgres backup %s`\n", name, name)
+			return
+		}
+		fmt.Printf("%-32s %-10s %s\n", "FILENAME", "SIZE", "CREATED")
+		for _, b := range out.Backups {
+			fmt.Printf("%-32s %-10s %s\n", b.Filename, humanBytes(b.BytesSize), b.CreatedAt.Format(time.RFC3339))
+		}
+	case "restore":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob postgres restore <name> [path|latest] [--force]")
+		}
+		path := positional(flags, 1)
+		if path == "" {
+			path = "latest"
+		}
+		force := flags["force"] == "true"
+		fmt.Printf("restoring %s from %s%s...\n", name, path, ternary(force, " (force)", ""))
+		t0 := time.Now()
+		if err := c.RestorePostgres(context.Background(), name, path, force); err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("restored in %s\n", time.Since(t0).Round(100*time.Millisecond))
 	default:
 		die("unknown postgres subcommand: %s", args[0])
+	}
+}
+
+func ternary(b bool, a, c string) string {
+	if b {
+		return a
+	}
+	return c
+}
+
+func humanBytes(n int64) string {
+	switch {
+	case n < 1024:
+		return fmt.Sprintf("%d B", n)
+	case n < 1024*1024:
+		return fmt.Sprintf("%.1f KiB", float64(n)/1024)
+	case n < 1024*1024*1024:
+		return fmt.Sprintf("%.1f MiB", float64(n)/1024/1024)
+	default:
+		return fmt.Sprintf("%.2f GiB", float64(n)/1024/1024/1024)
+	}
+}
+
+// --- managed services: valkey ---
+
+func cmdValkey(args []string) {
+	if len(args) == 0 {
+		die("usage: blob valkey <list|create|url|destroy> ...")
+	}
+	c := mustClient()
+	switch args[0] {
+	case "list", "ls":
+		out, err := c.ListValkey(context.Background())
+		if err != nil {
+			die("%v", err)
+		}
+		if len(out.Valkey) == 0 {
+			fmt.Println("no valkey instances")
+			return
+		}
+		fmt.Printf("%-20s %-7s %-10s %-22s %-7s %s\n", "NAME", "VERSION", "STATUS", "HOST", "PORT", "URL")
+		for _, v := range out.Valkey {
+			fmt.Printf("%-20s %-7s %-10s %-22s %-7d %s\n", v.Name, v.Version, v.Status, v.Host, v.Port, v.URLMasked)
+		}
+	case "create":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob valkey create <name> [--version V]")
+		}
+		req := &api.CreateValkeyRequest{Name: name, Version: flags["version"]}
+		fmt.Printf("creating valkey %q...\n", name)
+		t0 := time.Now()
+		out, err := c.CreateValkey(context.Background(), req)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("ready in %s\n", time.Since(t0).Round(100*time.Millisecond))
+		fmt.Printf("  name:    %s\n", out.Name)
+		fmt.Printf("  version: %s\n", out.Version)
+		fmt.Printf("  host:    %s\n", out.Host)
+		fmt.Printf("  port:    %d\n", out.Port)
+		fmt.Printf("  url:     %s\n", out.URLMasked)
+		fmt.Println()
+		fmt.Printf("To bind apps, add to blob.yaml:\n  services:\n    - %s\n", out.Name)
+		fmt.Printf("Apps will receive REDIS_URL, REDIS_HOST, REDIS_PORT, REDIS_PASSWORD.\n")
+	case "url":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob valkey url <name>")
+		}
+		url, err := c.ValkeyURL(context.Background(), name)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Println(url)
+	case "destroy", "rm":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob valkey destroy <name>")
+		}
+		if flags["yes"] != "true" {
+			fmt.Printf("destroy valkey %q? (Docker volume blob-valkey-%s preserved; type the name to confirm) ", name, name)
+			var line string
+			fmt.Fscanln(os.Stdin, &line)
+			if line != name {
+				die("aborted")
+			}
+		}
+		if err := c.DestroyValkey(context.Background(), name); err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("destroyed valkey %q (Docker volume blob-valkey-%s preserved)\n", name, name)
+	default:
+		die("unknown valkey subcommand: %s", args[0])
 	}
 }

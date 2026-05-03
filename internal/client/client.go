@@ -283,3 +283,53 @@ func (c *Client) PostgresURL(ctx context.Context, name string) (string, error) {
 func (c *Client) DestroyPostgres(ctx context.Context, name string) error {
 	return c.do(ctx, "DELETE", "/v1/postgres/"+url.PathEscape(name), nil, nil)
 }
+
+func (c *Client) BackupPostgres(ctx context.Context, name string) (*api.PostgresBackup, error) {
+	out := &api.PostgresBackup{}
+	if err := c.do(ctx, "POST", "/v1/postgres/"+url.PathEscape(name)+"/backup", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) ListPostgresBackups(ctx context.Context, name string) (*api.ListPostgresBackupsResponse, error) {
+	out := &api.ListPostgresBackupsResponse{}
+	if err := c.do(ctx, "GET", "/v1/postgres/"+url.PathEscape(name)+"/backups", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) RestorePostgres(ctx context.Context, name, path string, force bool) error {
+	return c.do(ctx, "POST", "/v1/postgres/"+url.PathEscape(name)+"/restore", &api.RestorePostgresRequest{Path: path, Force: force}, nil)
+}
+
+// --- managed services: valkey ---
+
+func (c *Client) ListValkey(ctx context.Context) (*api.ListValkeyResponse, error) {
+	out := &api.ListValkeyResponse{}
+	if err := c.do(ctx, "GET", "/v1/valkey", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) CreateValkey(ctx context.Context, req *api.CreateValkeyRequest) (*api.Valkey, error) {
+	out := &api.Valkey{}
+	if err := c.do(ctx, "POST", "/v1/valkey", req, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) ValkeyURL(ctx context.Context, name string) (string, error) {
+	out := &api.ValkeyURL{}
+	if err := c.do(ctx, "GET", "/v1/valkey/"+url.PathEscape(name)+"/url", nil, out); err != nil {
+		return "", err
+	}
+	return out.URL, nil
+}
+
+func (c *Client) DestroyValkey(ctx context.Context, name string) error {
+	return c.do(ctx, "DELETE", "/v1/valkey/"+url.PathEscape(name), nil, nil)
+}

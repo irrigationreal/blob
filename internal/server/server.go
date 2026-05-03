@@ -96,6 +96,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/v1/volumes", s.handleVolumes)
 	mux.HandleFunc("/v1/postgres", s.handlePostgres)
 	mux.HandleFunc("/v1/postgres/", s.handlePostgresItem)
+	mux.HandleFunc("/v1/valkey", s.handleValkey)
+	mux.HandleFunc("/v1/valkey/", s.handleValkeyItem)
 	return s.withAuth(mux)
 }
 

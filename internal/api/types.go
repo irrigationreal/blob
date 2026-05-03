@@ -284,3 +284,48 @@ type ListPostgresResponse struct {
 type PostgresURL struct {
 	URL string `json:"url"` // full postgres://... including password
 }
+
+// Postgres backups
+type PostgresBackup struct {
+	Name      string    `json:"name"`     // postgres instance name
+	Path      string    `json:"path"`     // server-side path to the .sql.gz file
+	Filename  string    `json:"filename"` // basename only (UTC-ISO timestamp)
+	BytesSize int64     `json:"bytes_size"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type ListPostgresBackupsResponse struct {
+	Backups []PostgresBackup `json:"backups"`
+}
+
+type RestorePostgresRequest struct {
+	Path  string `json:"path,omitempty"`  // explicit backup path or filename; "" or "latest" picks the newest
+	Force bool   `json:"force,omitempty"` // required when the database is non-empty
+}
+
+// Managed services — Valkey
+type Valkey struct {
+	Name      string    `json:"name"`
+	Version   string    `json:"version"`
+	Host      string    `json:"host"`
+	Port      int       `json:"port"`
+	JobID     string    `json:"job_id"`
+	URLMasked string    `json:"url"`    // redis://:***@host:port
+	Status    string    `json:"status"` // running | pending | dead
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type CreateValkeyRequest struct {
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"` // default 8
+	CPU     int    `json:"cpu,omitempty"`
+	Memory  int    `json:"memory,omitempty"`
+}
+
+type ListValkeyResponse struct {
+	Valkey []Valkey `json:"valkey"`
+}
+
+type ValkeyURL struct {
+	URL string `json:"url"` // full redis://:<password>@host:port
+}

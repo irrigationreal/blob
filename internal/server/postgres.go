@@ -153,6 +153,12 @@ func (s *Server) handlePostgresItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, 200, api.PostgresURL{URL: s.postgresURL(m, false)})
+	case len(parts) == 2 && parts[1] == "backup" && r.Method == "POST":
+		s.handlePostgresBackup(w, r, name)
+	case len(parts) == 2 && parts[1] == "backups" && r.Method == "GET":
+		s.handlePostgresBackupsList(w, r, name)
+	case len(parts) == 2 && parts[1] == "restore" && r.Method == "POST":
+		s.handlePostgresRestore(w, r, name)
 	default:
 		writeErr(w, 404, "not found")
 	}
@@ -331,7 +337,8 @@ func (s *Server) waitPostgresReady(ctx context.Context, m *postgresMeta, timeout
 // --- service binding (used by deploy path) -----------------------------------
 
 // resolveServices looks up each managed-service binding and merges its env
-// vars into req.Env. Currently only Postgres is supported.
+// vars into req.Env. Tries Postgres first, then Valkey. The first binding
+// wins the canonical "DATABASE_URL"/"REDIS_URL" slot per family.
 func (s *Server) resolveServices(req *api.DeployRequest) error {
 	if len(req.Services) == 0 {
 		return nil
@@ -339,32 +346,37 @@ func (s *Server) resolveServices(req *api.DeployRequest) error {
 	if req.Env == nil {
 		req.Env = map[string]string{}
 	}
-	primary := true
+	pgPrimary := true
+	redisPrimary := true
 	for _, svc := range req.Services {
-		m, err := s.loadPostgres(svc)
-		if err != nil {
-			return fmt.Errorf("service %q not found", svc)
+		// Try Postgres
+		if m, err := s.loadPostgres(svc); err == nil {
+			host := s.postgresHost()
+			dsn := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable",
+				m.User, m.Password, host, m.Port, m.Database)
+			if pgPrimary {
+				req.Env["DATABASE_URL"] = dsn
+				req.Env["PGHOST"] = host
+				req.Env["PGPORT"] = fmt.Sprintf("%d", m.Port)
+				req.Env["PGUSER"] = m.User
+				req.Env["PGPASSWORD"] = m.Password
+				req.Env["PGDATABASE"] = m.Database
+				pgPrimary = false
+			}
+			envPrefix := strings.ToUpper(strings.ReplaceAll(svc, "-", "_"))
+			req.Env[envPrefix+"_URL"] = dsn
+			req.Env[envPrefix+"_HOST"] = host
+			req.Env[envPrefix+"_PORT"] = fmt.Sprintf("%d", m.Port)
+			req.Env[envPrefix+"_USER"] = m.User
+			req.Env[envPrefix+"_PASSWORD"] = m.Password
+			req.Env[envPrefix+"_DATABASE"] = m.Database
+			continue
 		}
-		host := s.postgresHost()
-		dsn := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable",
-			m.User, m.Password, host, m.Port, m.Database)
-		if primary {
-			req.Env["DATABASE_URL"] = dsn
-			req.Env["PGHOST"] = host
-			req.Env["PGPORT"] = fmt.Sprintf("%d", m.Port)
-			req.Env["PGUSER"] = m.User
-			req.Env["PGPASSWORD"] = m.Password
-			req.Env["PGDATABASE"] = m.Database
-			primary = false
+		// Try Valkey
+		if s.lookupValkeyForBinding(svc, req.Env, &redisPrimary) {
+			continue
 		}
-		// Per-service prefixed envs so apps can bind multiple Postgres instances.
-		envPrefix := strings.ToUpper(strings.ReplaceAll(svc, "-", "_"))
-		req.Env[envPrefix+"_URL"] = dsn
-		req.Env[envPrefix+"_HOST"] = host
-		req.Env[envPrefix+"_PORT"] = fmt.Sprintf("%d", m.Port)
-		req.Env[envPrefix+"_USER"] = m.User
-		req.Env[envPrefix+"_PASSWORD"] = m.Password
-		req.Env[envPrefix+"_DATABASE"] = m.Database
+		return fmt.Errorf("service %q not found", svc)
 	}
 	return nil
 }
