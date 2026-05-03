@@ -42,9 +42,11 @@ curl -fsSL -o "$tmp" "$url"
 chmod +x "$tmp"
 
 dest="$PREFIX/bin/blob"
-if [ -w "$PREFIX/bin" ]; then
+if [ -w "$PREFIX/bin" ] || mkdir -p "$PREFIX/bin" 2>/dev/null; then
+  mkdir -p "$PREFIX/bin"
   mv "$tmp" "$dest"
 else
+  sudo mkdir -p "$PREFIX/bin"
   sudo mv "$tmp" "$dest"
 fi
 
