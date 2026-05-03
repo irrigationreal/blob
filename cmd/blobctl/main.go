@@ -16,6 +16,7 @@ import (
 	"github.com/darvell/blob/internal/client"
 	"github.com/darvell/blob/internal/config"
 	"github.com/darvell/blob/internal/detect"
+	"github.com/darvell/blob/internal/importers"
 	"github.com/darvell/blob/internal/manifest"
 	"github.com/darvell/blob/internal/tarball"
 )
@@ -25,8 +26,12 @@ const usage = `blobctl — deploy folders to The Blob
 Usage:
   blob init [--name N] [--port P] [--domain D] [--form F] [--root D]
                                                   Create a blob.yaml in current directory (auto-detects)
+  blob import compose <path>                      Translate docker-compose.yaml → blob.yaml (writes alongside)
+  blob import procfile <path>                     Translate Heroku Procfile → blob.yaml
+  blob import fly <path>                          Translate fly.toml → blob.yaml
   blob login --endpoint URL [--token T]           Save endpoint and token
   blob deploy [--name N] [--port P] [--env ENV]   Deploy current folder
+  blob deploy --from <kind> <path>                Import then deploy in one shot
   blob list                                       List apps
   blob status <app>                               Show one app
   blob logs <app> [-n 200] [--since 5m] [--grep P] [--follow]
@@ -92,7 +97,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.8.0"
+var version = "0.9.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -108,6 +113,8 @@ func main() {
 		fmt.Print(usage)
 	case "init":
 		cmdInit(args)
+	case "import":
+		cmdImport(args)
 	case "login":
 		cmdLogin(args)
 	case "deploy":
@@ -244,6 +251,68 @@ func cmdInit(args []string) {
 	fmt.Printf("wrote blob.yaml — %s\n", why)
 }
 
+// cmdImport translates a third-party manifest (compose / procfile / fly)
+// into blob.yaml. Mirrors `blob init`'s shape: writes blob.yaml in the
+// CWD (or alongside --path), prints warnings about anything that
+// couldn't be translated, and shows a diff vs any existing blob.yaml.
+func cmdImport(args []string) {
+	if len(args) < 2 {
+		die("usage: blob import <compose|procfile|fly> <path> [--out PATH] [--yes]")
+	}
+	kind, srcPath := args[0], args[1]
+	flags := parseFlags(args[2:])
+
+	var (
+		res *importers.Result
+		err error
+	)
+	switch kind {
+	case "compose":
+		res, err = importers.Compose(srcPath)
+	case "procfile":
+		res, err = importers.Procfile(srcPath)
+	case "fly":
+		res, err = importers.Fly(srcPath)
+	default:
+		die("unknown import kind %q (expected: compose | procfile | fly)", kind)
+	}
+	if err != nil {
+		die("import %s: %v", kind, err)
+	}
+
+	out := flags["out"]
+	if out == "" {
+		// Default: alongside the source file
+		out = filepath.Join(filepath.Dir(srcPath), "blob.yaml")
+	}
+
+	fmt.Printf("imported via %s from %s\n", res.Source, srcPath)
+	fmt.Println()
+	fmt.Println("--- generated blob.yaml ---")
+	fmt.Print(string(res.YAML))
+	fmt.Println("---")
+	if len(res.Warnings) > 0 {
+		fmt.Printf("\nWarnings (%d):\n", len(res.Warnings))
+		for _, w := range res.Warnings {
+			fmt.Printf("  - %s\n", w)
+		}
+	}
+
+	// If a blob.yaml already exists at out, show a diff hint.
+	if existing, err := os.ReadFile(out); err == nil && string(existing) != string(res.YAML) {
+		fmt.Printf("\nNOTE: %s already exists. Use --yes to overwrite.\n", out)
+		if flags["yes"] != "true" {
+			die("aborted (existing %s); pass --yes to overwrite", out)
+		}
+	}
+
+	if err := os.WriteFile(out, res.YAML, 0o644); err != nil {
+		die("write %s: %v", out, err)
+	}
+	fmt.Printf("\nwrote %s\n", out)
+	fmt.Printf("Next: cd %s && blob deploy\n", filepath.Dir(out))
+}
+
 func cmdLogin(args []string) {
 	flags := parseFlags(args)
 	endpoint := strings.TrimRight(flags["endpoint"], "/")
@@ -323,6 +392,25 @@ func componentToReq(app string, c *manifest.Component, env string) *api.DeployRe
 
 func cmdDeploy(args []string) {
 	flags := parseFlags(args)
+	// --from <kind>: import a third-party manifest into ./blob.yaml first,
+	// then deploy from the directory containing the source file. The path
+	// to the source file is the first positional arg after the kind.
+	if kind := flags["from"]; kind != "" {
+		path := positional(flags, 0)
+		if path == "" {
+			die("usage: blob deploy --from <compose|procfile|fly> <path>")
+		}
+		// Force overwrite — operator opted in by passing --from.
+		cmdImport([]string{kind, path, "--yes"})
+		// Switch to the source dir so deploy reads the freshly-written
+		// blob.yaml and tarballs that folder.
+		dir := filepath.Dir(path)
+		if err := os.Chdir(dir); err != nil {
+			die("chdir %s: %v", dir, err)
+		}
+		fmt.Println()
+		fmt.Println("--- now deploying ---")
+	}
 	m := loadManifestForDeploy()
 	if v := flags["env"]; v != "" {
 		m.Environment = v

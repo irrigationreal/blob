@@ -596,8 +596,34 @@ func (s *Server) deployImage(ctx context.Context, req *api.DeployRequest, source
 		out.URL = "https://" + domain
 	}
 	image := req.Tag
+	// Image references without a registry prefix:
+	//   - "myapp:1234567890"  → blob's own registry (build-pushed by us)
+	//   - "nginx:alpine"      → Docker Hub library image (do NOT rewrite)
+	// We can't tell apart by name alone. Heuristic: if the tag matches our
+	// build-tag shape (10-digit unix timestamp), it's our own; otherwise
+	// treat as a public image and pass through to the docker daemon. This
+	// matches what `blob deploy --image` users expect when importing
+	// compose/fly manifests that reference upstream library images.
 	if !strings.Contains(image, "/") {
-		image = s.cfg.Registry + "/" + image
+		colon := strings.LastIndex(image, ":")
+		looksLikeBuildTag := false
+		if colon > 0 && colon < len(image)-1 {
+			tag := image[colon+1:]
+			if len(tag) == 10 {
+				digits := true
+				for _, r := range tag {
+					if r < '0' || r > '9' {
+						digits = false
+						break
+					}
+				}
+				looksLikeBuildTag = digits
+			}
+		}
+		if looksLikeBuildTag {
+			image = s.cfg.Registry + "/" + image
+		}
+		// else: leave as-is so docker pulls from docker.io/library/<name>:<tag>
 	}
 	out.Image = image
 	if err := s.resolveSecrets(req); err != nil {

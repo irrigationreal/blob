@@ -20,7 +20,7 @@ blob deploy
 
 That's it. The CLI tarballs the folder, ships it to `blobd`, which builds on the host (so the architecture matches), pushes to the platform registry, schedules a Nomad job, and Traefik picks up the route. ACME issues the cert automatically on first hit.
 
-## Five live dogfooded apps
+## Live dogfooded apps
 
 These are real side projects pulled out of `~/code` and deployed with no edits beyond `blob init`:
 
@@ -31,6 +31,16 @@ These are real side projects pulled out of `~/code` and deployed with no edits b
 - <https://nye-2025.irrigate.cc/>
 
 Plus an example with a custom domain attached: <https://static.darv.ai/> (same backing app as `pong`).
+
+### Imported via v0.9 importers
+
+The same platform host runs these via `blob import compose|procfile|fly` → `blob deploy` with no manual blob.yaml edits:
+
+- <https://blob-nginx-import.irrigate.cc/> — `nginx:alpine`, imported from a one-service docker-compose.yml
+- <https://blob-whoami-import.irrigate.cc/> — `traefik/whoami`, imported from compose with env vars
+- <https://blob-httpbin-import.irrigate.cc/> — `kennethreitz/httpbin`, imported from compose
+- <https://python-procfile.irrigate.cc/> — `python -m http.server` from a Heroku Procfile + Dockerfile
+- <https://blob-fly-import.irrigate.cc/> — `httpd:alpine` from a fly.toml with `[build] image=`
 
 ## What runs today
 
@@ -50,6 +60,7 @@ Plus an example with a custom domain attached: <https://static.darv.ai/> (same b
 | **Postgres backups** (`blob postgres backup/backups/restore`) | shipped  |
 | **Off-host backup shipping** to S3-compatible stores + scheduled cron + retention | shipped  |
 | **Observability**: managed Loki + Grafana + Promtail; `blob logs --since/--grep/--follow` queries Loki when registered, falls back to nomad alloc tail | shipped  |
+| **Importers**: `blob import compose|procfile|fly` translate third-party manifests to blob.yaml; `blob deploy --from <kind> <path>` does both in one shot | shipped  |
 | **Managed Valkey** (Redis-compatible) with `services:` env injection (`REDIS_URL`) | shipped  |
 | **Custom domains** with `blob domains attach` (auto-HTTPS)     | shipped  |
 | **Multiple hostnames** per app                                 | shipped  |
@@ -76,7 +87,7 @@ The full v1 spec ([`docs/the-blob-spec.md`](docs/the-blob-spec.md)) is the desti
 - **Multi-region** active-passive failover
 - **Preview environments** auto-created from CI webhooks
 - **Status pages**, cost rollups, plugins, web console, GPU/confidential compute
-- Importers beyond Dockerfile/Compose: Helm, Heroku/Procfile, Render, Vercel/Netlify, Fly, Nix flakes
+- Importers beyond compose/procfile/fly: Helm, Render, Vercel/Netlify, Nix flakes
 - Other managed services: NATS, ScyllaDB, ClickHouse
 
 ## Setting up your own Blob
