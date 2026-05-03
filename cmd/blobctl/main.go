@@ -110,6 +110,10 @@ Usage:
 
   blob services list                              Roll-up of every managed-service kind
 
+  blob preview create <app> --branch <name>       Ephemeral deploy at <app>-<branch>.<base>
+  blob preview list <app>
+  blob preview destroy <app> <branch>
+
   blob autoscale list
   blob autoscale set <app> --min N --max M --metric cpu|memory|http_qps --target P
                                                   [--cooldown-up 60s] [--cooldown-down 180s]
@@ -120,7 +124,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.11.0"
+var version = "0.12.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -138,6 +142,16 @@ func main() {
 		cmdInit(args)
 	case "import":
 		cmdImport(args)
+	case "from-nextjs":
+		if len(args) < 1 {
+			die("usage: blob from-nextjs <dir> [--yes]")
+		}
+		cmdImport(append([]string{"nextjs", args[0]}, args[1:]...))
+	case "from-netlify":
+		if len(args) < 1 {
+			die("usage: blob from-netlify <dir-or-netlify.toml> [--yes]")
+		}
+		cmdImport(append([]string{"netlify", args[0]}, args[1:]...))
 	case "login":
 		cmdLogin(args)
 	case "deploy":
@@ -188,6 +202,8 @@ func main() {
 		cmdAutoscale(args)
 	case "services":
 		cmdServices(args)
+	case "preview":
+		cmdPreview(args)
 	case "doctor":
 		cmdDoctor()
 	case "whoami":
@@ -290,7 +306,7 @@ func cmdInit(args []string) {
 // couldn't be translated, and shows a diff vs any existing blob.yaml.
 func cmdImport(args []string) {
 	if len(args) < 2 {
-		die("usage: blob import <compose|procfile|fly> <path> [--out PATH] [--yes]")
+		die("usage: blob import <compose|procfile|fly|nextjs|netlify> <path> [--out PATH] [--yes]")
 	}
 	kind, srcPath := args[0], args[1]
 	flags := parseFlags(args[2:])
@@ -306,8 +322,13 @@ func cmdImport(args []string) {
 		res, err = importers.Procfile(srcPath)
 	case "fly":
 		res, err = importers.Fly(srcPath)
+	case "nextjs":
+		// nextjs takes a directory, not a file
+		res, err = importers.NextJS(srcPath)
+	case "netlify":
+		res, err = importers.Netlify(srcPath)
 	default:
-		die("unknown import kind %q (expected: compose | procfile | fly)", kind)
+		die("unknown import kind %q (expected: compose | procfile | fly | nextjs | netlify)", kind)
 	}
 	if err != nil {
 		die("import %s: %v", kind, err)
@@ -315,8 +336,14 @@ func cmdImport(args []string) {
 
 	out := flags["out"]
 	if out == "" {
-		// Default: alongside the source file
-		out = filepath.Join(filepath.Dir(srcPath), "blob.yaml")
+		// Default: alongside the source. For directory-based importers
+		// (nextjs) the source IS the dir. For file-based importers, use
+		// the file's parent.
+		baseDir := srcPath
+		if fi, statErr := os.Stat(srcPath); statErr == nil && !fi.IsDir() {
+			baseDir = filepath.Dir(srcPath)
+		}
+		out = filepath.Join(baseDir, "blob.yaml")
 	}
 
 	fmt.Printf("imported via %s from %s\n", res.Source, srcPath)
@@ -343,6 +370,21 @@ func cmdImport(args []string) {
 		die("write %s: %v", out, err)
 	}
 	fmt.Printf("\nwrote %s\n", out)
+	// Importers like nextjs ship a Dockerfile + .dockerignore alongside
+	// blob.yaml. Refuse to overwrite existing files unless --yes is set.
+	for rel, data := range res.ExtraFiles {
+		extraPath := filepath.Join(filepath.Dir(out), rel)
+		if existing, err := os.ReadFile(extraPath); err == nil && string(existing) != string(data) {
+			if flags["yes"] != "true" {
+				fmt.Printf("NOTE: %s already exists; left alone (pass --yes to overwrite)\n", extraPath)
+				continue
+			}
+		}
+		if err := os.WriteFile(extraPath, data, 0o644); err != nil {
+			die("write %s: %v", extraPath, err)
+		}
+		fmt.Printf("wrote %s\n", extraPath)
+	}
 	fmt.Printf("Next: cd %s && blob deploy\n", filepath.Dir(out))
 }
 
@@ -2080,4 +2122,67 @@ func printBackupConfig(c *api.PostgresBackupConfig) {
 	fmt.Printf("  s3_use_path_style:  %t\n", c.S3UsePathStyle)
 	fmt.Printf("  schedule:           %s (UTC)\n", c.Schedule)
 	fmt.Printf("  retention:          daily=%d weekly=%d monthly=%d\n", c.RetentionDaily, c.RetentionWeekly, c.RetentionMonthly)
+}
+
+// --- preview environments (v0.12) ---
+
+func cmdPreview(args []string) {
+	if len(args) == 0 {
+		die("usage: blob preview <create|list|destroy> ...")
+	}
+	c := mustClient()
+	switch args[0] {
+	case "create":
+		flags := parseFlags(args[1:])
+		app := positional(flags, 0)
+		branch := flags["branch"]
+		if branch == "" {
+			branch = positional(flags, 1)
+		}
+		if app == "" || branch == "" {
+			die("usage: blob preview create <app> --branch <name>")
+		}
+		fmt.Printf("creating preview %s/%s ...\n", app, branch)
+		t0 := time.Now()
+		p, err := c.CreatePreview(context.Background(), app, branch)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("ready in %s\n  url:    %s\n  job:    %s\n  domain: %s\n",
+			time.Since(t0).Round(100*time.Millisecond), p.URL, p.JobID, p.Domain)
+	case "list", "ls":
+		flags := parseFlags(args[1:])
+		app := positional(flags, 0)
+		if app == "" {
+			die("usage: blob preview list <app>")
+		}
+		out, err := c.ListPreviews(context.Background(), app)
+		if err != nil {
+			die("%v", err)
+		}
+		if len(out.Previews) == 0 {
+			fmt.Printf("no previews for %s\n", app)
+			return
+		}
+		fmt.Printf("%-22s %-12s %-32s %s\n", "BRANCH", "JOB", "DOMAIN", "CREATED")
+		for _, p := range out.Previews {
+			fmt.Printf("%-22s %-12s %-32s %s\n", p.Branch, p.JobID, p.Domain, p.CreatedAt.Format(time.RFC3339))
+		}
+	case "destroy", "rm":
+		flags := parseFlags(args[1:])
+		app := positional(flags, 0)
+		branch := positional(flags, 1)
+		if branch == "" {
+			branch = flags["branch"]
+		}
+		if app == "" || branch == "" {
+			die("usage: blob preview destroy <app> <branch>")
+		}
+		if err := c.DestroyPreview(context.Background(), app, branch); err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("destroyed preview %s/%s\n", app, branch)
+	default:
+		die("unknown preview subcommand: %s", args[0])
+	}
 }

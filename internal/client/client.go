@@ -635,3 +635,25 @@ func (c *Client) ListServices(ctx context.Context) (*api.ListServicesResponse, e
 	}
 	return out, nil
 }
+
+// --- Previews (v0.12) ---
+
+func (c *Client) ListPreviews(ctx context.Context, app string) (*api.ListPreviewsResponse, error) {
+	out := &api.ListPreviewsResponse{}
+	if err := c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(app)+"/preview", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) CreatePreview(ctx context.Context, app, branch string) (*api.Preview, error) {
+	out := &api.Preview{}
+	if err := c.do(ctx, "POST", "/v1/apps/"+url.PathEscape(app)+"/preview/"+url.PathEscape(branch), nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) DestroyPreview(ctx context.Context, app, branch string) error {
+	return c.do(ctx, "DELETE", "/v1/apps/"+url.PathEscape(app)+"/preview/"+url.PathEscape(branch), nil, nil)
+}

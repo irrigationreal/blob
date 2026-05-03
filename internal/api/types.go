@@ -575,3 +575,18 @@ type ServiceSummary struct {
 type ListServicesResponse struct {
 	Services []ServiceSummary `json:"services"`
 }
+
+// Preview environments (v0.12) — ephemeral per-branch deploys.
+type Preview struct {
+	App       string    `json:"app"`
+	Branch    string    `json:"branch"`
+	JobID     string    `json:"job_id"`
+	Domain    string    `json:"domain"`
+	URL       string    `json:"url"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type ListPreviewsResponse struct {
+	App      string    `json:"app"`
+	Previews []Preview `json:"previews"`
+}

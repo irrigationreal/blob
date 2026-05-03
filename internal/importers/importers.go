@@ -24,6 +24,10 @@ type Result struct {
 	Warnings []string
 	// Source describes which importer ran, used in CLI output.
 	Source string
+	// ExtraFiles are additional artefacts (Dockerfile, .dockerignore, etc.)
+	// the importer wants written next to blob.yaml. Map key is the path
+	// relative to the import target dir.
+	ExtraFiles map[string][]byte
 }
 
 // Render fills in Result.YAML from Result.Manifest. Importers usually call

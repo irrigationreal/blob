@@ -454,6 +454,13 @@ func (s *Server) handleAppItem(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "invalid app name")
 		return
 	}
+	// Preview endpoints: /v1/apps/<app>/preview[/<branch>]
+	if len(parts) == 2 && (parts[1] == "preview" || strings.HasPrefix(parts[1], "preview/")) {
+		branch := strings.TrimPrefix(parts[1], "preview")
+		branch = strings.TrimPrefix(branch, "/")
+		s.handlePreview(w, r, app, branch)
+		return
+	}
 	switch {
 	case len(parts) == 1 && r.Method == "GET":
 		out, err := s.appStatus(r.Context(), app)
