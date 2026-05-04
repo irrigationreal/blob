@@ -69,6 +69,13 @@ Usage:
   blob audit list [--limit N]                     Show authenticated mutating API actions
   blob audit show <id>
 
+  blob identity tokens list
+  blob identity tokens create <name>              Prints the service token secret once
+  blob identity tokens revoke <id> [--yes]
+  blob identity grants list [--token ID]
+  blob identity grants add <id> <scope>
+  blob identity grants revoke <id> <scope> [--yes]
+
   blob status-pages enable <app>                  Publish /status/<app> HTML + JSON
   blob status-pages list
   blob status-pages show <app>
@@ -181,7 +188,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.30.0"
+var version = "0.31.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -237,6 +244,8 @@ func main() {
 		cmdNodes(args)
 	case "audit":
 		cmdAudit(args)
+	case "identity":
+		cmdIdentity(args)
 	case "status-pages", "statuspage":
 		cmdStatusPages(args)
 	case "volumes":
@@ -1246,6 +1255,138 @@ func cmdAudit(args []string) {
 		fmt.Println(string(b))
 	default:
 		die("unknown audit subcommand: %s", args[0])
+	}
+}
+
+func cmdIdentity(args []string) {
+	if len(args) == 0 {
+		die("usage: blob identity <tokens|grants> ...")
+	}
+	c := mustClient()
+	switch args[0] {
+	case "tokens", "token":
+		cmdIdentityTokens(c, args[1:])
+	case "grants", "grant":
+		cmdIdentityGrants(c, args[1:])
+	default:
+		die("unknown identity subcommand: %s", args[0])
+	}
+}
+
+func cmdIdentityTokens(c *client.Client, args []string) {
+	if len(args) == 0 {
+		die("usage: blob identity tokens <list|create|revoke> ...")
+	}
+	switch args[0] {
+	case "list", "ls":
+		out, err := c.ListIdentityTokens(context.Background())
+		if err != nil {
+			die("%v", err)
+		}
+		if len(out.Tokens) == 0 {
+			fmt.Println("no service tokens")
+			return
+		}
+		fmt.Printf("%-18s %-24s %-20s %-20s %s\n", "ID", "NAME", "CREATED", "REVOKED", "SCOPES")
+		for _, t := range out.Tokens {
+			revoked := "-"
+			if !t.RevokedAt.IsZero() {
+				revoked = t.RevokedAt.Format(time.RFC3339)
+			}
+			scopes := "-"
+			if len(t.Scopes) > 0 {
+				scopes = strings.Join(t.Scopes, ",")
+			}
+			fmt.Printf("%-18s %-24s %-20s %-20s %s\n", t.ID, t.Name, t.CreatedAt.Format(time.RFC3339), revoked, scopes)
+		}
+	case "create":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob identity tokens create <name>")
+		}
+		out, err := c.CreateIdentityToken(context.Background(), name)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("created service token %s (%s)\n", out.Token.ID, out.Token.Name)
+		fmt.Printf("secret: %s\n", out.Secret)
+		fmt.Println("save this now; it is only shown once")
+	case "revoke", "rm", "delete":
+		flags := parseFlags(args[1:])
+		id := positional(flags, 0)
+		if id == "" {
+			die("usage: blob identity tokens revoke <id> [--yes]")
+		}
+		if flags["yes"] != "true" {
+			fmt.Printf("revoke service token %q? type the token id to confirm: ", id)
+			var line string
+			fmt.Fscanln(os.Stdin, &line)
+			if line != id {
+				die("aborted")
+			}
+		}
+		if err := c.RevokeIdentityToken(context.Background(), id); err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("revoked service token %s\n", id)
+	default:
+		die("unknown identity tokens subcommand: %s", args[0])
+	}
+}
+
+func cmdIdentityGrants(c *client.Client, args []string) {
+	if len(args) == 0 {
+		die("usage: blob identity grants <list|add|revoke> ...")
+	}
+	switch args[0] {
+	case "list", "ls":
+		flags := parseFlags(args[1:])
+		out, err := c.ListIdentityGrants(context.Background(), flags["token"])
+		if err != nil {
+			die("%v", err)
+		}
+		if len(out.Grants) == 0 {
+			fmt.Println("no grants")
+			return
+		}
+		fmt.Printf("%-18s %-20s %s\n", "TOKEN", "SCOPE", "UPDATED")
+		for _, g := range out.Grants {
+			fmt.Printf("%-18s %-20s %s\n", g.TokenID, g.Scope, g.CreatedAt.Format(time.RFC3339))
+		}
+	case "add":
+		flags := parseFlags(args[1:])
+		id := positional(flags, 0)
+		scope := positional(flags, 1)
+		if id == "" || scope == "" {
+			die("usage: blob identity grants add <token-id> <scope>")
+		}
+		grant, err := c.AddIdentityGrant(context.Background(), id, scope)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("granted %s to %s\n", grant.Scope, grant.TokenID)
+	case "revoke", "rm", "delete":
+		flags := parseFlags(args[1:])
+		id := positional(flags, 0)
+		scope := positional(flags, 1)
+		if id == "" || scope == "" {
+			die("usage: blob identity grants revoke <token-id> <scope> [--yes]")
+		}
+		if flags["yes"] != "true" {
+			fmt.Printf("revoke grant %q from %q? type the scope to confirm: ", scope, id)
+			var line string
+			fmt.Fscanln(os.Stdin, &line)
+			if line != scope {
+				die("aborted")
+			}
+		}
+		if err := c.RemoveIdentityGrant(context.Background(), id, scope); err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("revoked %s from %s\n", scope, id)
+	default:
+		die("unknown identity grants subcommand: %s", args[0])
 	}
 }
 

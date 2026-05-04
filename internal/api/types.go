@@ -127,8 +127,50 @@ type ErrorBody struct {
 }
 
 type WhoAmI struct {
+	Name      string   `json:"name"`
+	OK        bool     `json:"ok"`
+	Actor     string   `json:"actor,omitempty"`
+	ActorName string   `json:"actor_name,omitempty"`
+	Owner     bool     `json:"owner,omitempty"`
+	Scopes    []string `json:"scopes,omitempty"`
+}
+
+// Identity / RBAC
+
+type IdentityToken struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+	RevokedAt time.Time `json:"revoked_at,omitempty"`
+	Scopes    []string  `json:"scopes,omitempty"`
+}
+
+type CreateIdentityTokenRequest struct {
 	Name string `json:"name"`
-	OK   bool   `json:"ok"`
+}
+
+type CreateIdentityTokenResponse struct {
+	Token  IdentityToken `json:"token"`
+	Secret string        `json:"secret"`
+}
+
+type ListIdentityTokensResponse struct {
+	Tokens []IdentityToken `json:"tokens"`
+}
+
+type IdentityGrant struct {
+	TokenID   string    `json:"token_id"`
+	Scope     string    `json:"scope"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type IdentityGrantRequest struct {
+	TokenID string `json:"token_id"`
+	Scope   string `json:"scope"`
+}
+
+type ListIdentityGrantsResponse struct {
+	Grants []IdentityGrant `json:"grants"`
 }
 
 // Secrets API

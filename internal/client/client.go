@@ -251,6 +251,52 @@ func (c *Client) GetAudit(ctx context.Context, id string) (*api.AuditEvent, erro
 	return out, nil
 }
 
+func (c *Client) ListIdentityTokens(ctx context.Context) (*api.ListIdentityTokensResponse, error) {
+	out := &api.ListIdentityTokensResponse{}
+	if err := c.do(ctx, "GET", "/v1/identity/tokens", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) CreateIdentityToken(ctx context.Context, name string) (*api.CreateIdentityTokenResponse, error) {
+	out := &api.CreateIdentityTokenResponse{}
+	req := &api.CreateIdentityTokenRequest{Name: name}
+	if err := c.do(ctx, "POST", "/v1/identity/tokens", req, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) RevokeIdentityToken(ctx context.Context, id string) error {
+	return c.do(ctx, "DELETE", "/v1/identity/tokens/"+url.PathEscape(id), nil, nil)
+}
+
+func (c *Client) ListIdentityGrants(ctx context.Context, tokenID string) (*api.ListIdentityGrantsResponse, error) {
+	q := ""
+	if tokenID != "" {
+		q = "?token_id=" + url.QueryEscape(tokenID)
+	}
+	out := &api.ListIdentityGrantsResponse{}
+	if err := c.do(ctx, "GET", "/v1/identity/grants"+q, nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) AddIdentityGrant(ctx context.Context, tokenID, scope string) (*api.IdentityGrant, error) {
+	out := &api.IdentityGrant{}
+	req := &api.IdentityGrantRequest{TokenID: tokenID, Scope: scope}
+	if err := c.do(ctx, "POST", "/v1/identity/grants", req, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) RemoveIdentityGrant(ctx context.Context, tokenID, scope string) error {
+	return c.do(ctx, "DELETE", "/v1/identity/grants/"+url.PathEscape(tokenID)+"/"+url.PathEscape(scope), nil, nil)
+}
+
 func (c *Client) ListNodes(ctx context.Context) (*api.ListNodesResponse, error) {
 	out := &api.ListNodesResponse{}
 	if err := c.do(ctx, "GET", "/v1/nodes", nil, out); err != nil {

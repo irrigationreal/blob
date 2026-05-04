@@ -17,7 +17,7 @@ Authenticated `POST`, `PUT`, `PATCH`, and `DELETE` requests under `/v1/` are log
 An event records:
 
 - event id and UTC timestamp
-- bearer-token actor hash prefix, not the token itself
+- resolved actor id (`owner` for the break-glass token, or the scoped token id)
 - method, sanitized path, and a small action label
 - HTTP status code
 - remote address and sanitized user agent
@@ -46,7 +46,7 @@ aud-1777872523412-aabbccddeeff 2026-05-04T05:30:00Z POST     create status-pages
 {
   "id": "aud-1777872523412-aabbccddeeff",
   "created_at": "2026-05-04T05:30:00Z",
-  "actor": "bearer:8f14e45fceea",
+  "actor": "tok-7c9d3a21b010",
   "method": "POST",
   "path": "/v1/status-pages",
   "action": "create status-pages",

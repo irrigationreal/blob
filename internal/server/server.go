@@ -11,7 +11,6 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -120,6 +119,11 @@ func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok\n")) })
 	mux.HandleFunc("/v1/whoami", s.handleWhoAmI)
+	mux.HandleFunc("/v1/identity", s.handleIdentityRoot)
+	mux.HandleFunc("/v1/identity/tokens", s.handleIdentityTokens)
+	mux.HandleFunc("/v1/identity/tokens/", s.handleIdentityTokenItem)
+	mux.HandleFunc("/v1/identity/grants", s.handleIdentityGrants)
+	mux.HandleFunc("/v1/identity/grants/", s.handleIdentityGrantItem)
 	mux.HandleFunc("/v1/sources/", s.handleUploadSource)
 	mux.HandleFunc("/v1/deploy", s.handleDeploy)
 	mux.HandleFunc("/v1/deploy-image", s.handleDeployImage)
@@ -191,10 +195,24 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			return
 		}
 		ah := r.Header.Get("Authorization")
-		if !strings.HasPrefix(ah, "Bearer ") || subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(ah, "Bearer ")), []byte(s.cfg.Token)) != 1 {
+		if !strings.HasPrefix(ah, "Bearer ") {
 			writeErr(w, http.StatusUnauthorized, "invalid token")
 			return
 		}
+		actor, ok := s.authenticateBearer(strings.TrimPrefix(ah, "Bearer "))
+		if !ok {
+			writeErr(w, http.StatusUnauthorized, "invalid token")
+			return
+		}
+		required := s.requiredScope(r)
+		if !actor.hasScope(required) {
+			writeErr(w, http.StatusForbidden, "forbidden: token lacks scope "+required)
+			if isAuditMutation(r) {
+				s.auditMutatingRequest(r, http.StatusForbidden, actor.ID)
+			}
+			return
+		}
+		r = r.WithContext(context.WithValue(r.Context(), authActorKey{}, actor))
 		if isAuditMutation(r) {
 			aw := &auditResponseWriter{ResponseWriter: w}
 			next.ServeHTTP(aw, r)
@@ -202,7 +220,7 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			if status == 0 {
 				status = 200
 			}
-			s.auditMutatingRequest(r, status, auditActor(strings.TrimPrefix(ah, "Bearer ")))
+			s.auditMutatingRequest(r, status, actor.ID)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -221,7 +239,8 @@ func writeErr(w http.ResponseWriter, code int, msg string) {
 
 func (s *Server) handleWhoAmI(w http.ResponseWriter, r *http.Request) {
 	host, _ := os.Hostname()
-	writeJSON(w, 200, api.WhoAmI{Name: host, OK: true})
+	actor := actorFromContext(r.Context())
+	writeJSON(w, 200, api.WhoAmI{Name: host, OK: true, Actor: actor.ID, ActorName: actor.Name, Owner: actor.Owner, Scopes: actor.Scopes})
 }
 
 var nameRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
