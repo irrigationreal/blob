@@ -9,9 +9,29 @@ blob from-netlify <dir-or-netlify.toml> [--yes]
 blob deploy --from <kind> <path>
 ```
 
-Available kinds: `compose`, `procfile`, `fly`, `nextjs`, `netlify`, `render`, `vercel`, `nix`.
+Available kinds: `compose`, `procfile`, `fly`, `nextjs`, `netlify`, `render`, `vercel`, `nix`, `helm`.
 
 Every importer prints the generated YAML and a list of warnings about anything it could not translate. Existing files are not overwritten unless `--yes` is passed.
+
+## Helm (`import helm`)
+
+Accepts a chart directory or packaged `chart.tgz`. The importer runs `helm template blob-import <path>` locally, then translates the rendered Kubernetes YAML.
+
+| Kubernetes object | blob.yaml |
+|---|---|
+| `Deployment` / `StatefulSet` with matching `Service` | `form: web-service`, `port:` from Service targetPort/containerPort |
+| `Deployment` / `StatefulSet` without a service | `form: daemon` unless a container port implies web-service |
+| `DaemonSet` | daemon or web-service, with warning that per-node placement is not preserved |
+| `Service` | associated with matching workload by selector |
+| `Ingress` host rules | `domain:` / `domains:` for the matched service |
+| `Job` | `form: job` |
+| `CronJob` | `form: cronjob`, `schedule:` |
+| literal container `env` | `env:` map |
+| CPU/memory requests or limits | `cpu:` / `memory:` |
+| PVC volume mounts | `volumes:` |
+| extra containers | `sidecars:` |
+
+Dropped with warnings: ConfigMaps, Secrets, RBAC, service accounts, HPAs, PDBs, NetworkPolicies, probes, init containers, pod scheduling fields, security context, image pull secrets, non-PVC volumes, service types, Ingress TLS secrets, and path routing. Recreate those as Blob secrets, managed services, deploy plugins, autoscaling, or edge/app config.
 
 ## Render (`import render`)
 
