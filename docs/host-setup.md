@@ -8,7 +8,7 @@ The result: your `blob deploy` from a laptop produces `https://<name>.<your-doma
 
 - A Debian 12 / Ubuntu 22+ host with a public IP. 4 GiB RAM is enough; 2 GiB works for very small fleets. **Must run systemd as PID 1** (any real VM, bare metal, or Hetzner-style VPS does; bare Docker/LXC containers without `--init` do not — `bootstrap-host.sh`'s `systemctl enable --now` calls fail with "System has not been booted with systemd").
 - DNS: a wildcard A/AAAA record `*.<base-domain>` AND the apex `<base-domain>` both pointing at the host's public IP. The wildcard is for **subdomain coverage** (every app you deploy lands at `<app>.<base-domain>`); it is NOT a wildcard cert. Let's Encrypt HTTP-01 (which is what `bootstrap-host.sh` uses) issues a fresh per-subdomain cert at first request — that works for `<app>.<base>` but cannot issue `*.<base>`.
-- Ports 22 (SSH), 80 (HTTP), 443 (HTTPS), and 8787 (the API, optional if you proxy it) reachable.
+- Ports 22 (SSH), 80 (HTTP), 443 (HTTPS), 20000-20099 (optional public TCP services), and 8787 (the API, optional if you proxy it) reachable.
 - Root or passwordless sudo on the host.
 - A workstation with `blob` installed.
 
@@ -47,7 +47,7 @@ What it installs / configures, in order:
 2. Docker CE + Compose plugin from `download.docker.com`.
 3. Optional Kata Containers when `ENABLE_KATA=1`: downloads the pinned static Kata release, configures Docker runtime `kata-runtime`, runs `kata-runtime check`, and adds `meta { blob_kata = "true" }` to the Nomad client config.
 4. Nomad (latest stable) from `apt.releases.hashicorp.com`. Configures it as a single-node server-and-client at `/etc/nomad.d/blob.hcl`, data dir `/opt/nomad/data`. Enables and starts both `docker` and `nomad`.
-5. UFW: opens 22/80/443 inbound only. **Note:** managed-service ports (Loki, Grafana, Tempo, Prometheus, NATS) are NOT opened here. See the [observability doc](observability.md#ufw) for the rules to add before running `blob loki create` etc. — the docker bridge needs `from 172.17.0.0/16` allowed on the relevant port ranges.
+5. UFW: opens 22/80/443 plus 20000-20099 for optional public TCP services. **Note:** managed-service ports (Loki, Grafana, Tempo, Prometheus, NATS) are NOT opened here. See the [observability doc](observability.md#ufw) for the rules to add before running `blob loki create` etc. — the docker bridge needs `from 172.17.0.0/16` allowed on the relevant port ranges.
 6. Generates the registry htpasswd at `/etc/blob/registry.htpasswd` and the matching plaintext credentials at `/etc/blob/registry-credentials.txt`.
 7. Submits a `traefik:v3.6` Nomad job listening on host ports 80/443 with ACME via HTTP-01, providers.nomad enabled.
 8. Submits a `registry:2` Nomad job under `registry.$BASE_DOMAIN` reading the htpasswd from step 6.
@@ -166,7 +166,7 @@ If no eligible Kata node exists, Nomad leaves the allocation pending instead of 
 
 ## Before you run `blob loki create` (or any managed service)
 
-`bootstrap-host.sh` only opens 22/80/443 in UFW. Every managed-service driver (Loki, Grafana, Tempo, Prometheus, NATS) listens on a port range above 13000 and needs the docker bridge to reach it. Apply the rules in [`docs/observability.md#ufw`](observability.md) before creating any of them, or `blob loki create` will succeed in scheduling Nomad's job but the data plane will be unreachable from the rest of the fleet.
+`bootstrap-host.sh` opens public edge ports and the public TCP-service pool, but not the private managed-service ranges. Every managed-service driver (Loki, Grafana, Tempo, Prometheus, NATS) listens on a port range above 13000 and needs the docker bridge to reach it. Apply the rules in [`docs/observability.md#ufw`](observability.md) before creating any of them, or `blob loki create` will succeed in scheduling Nomad's job but the data plane will be unreachable from the rest of the fleet.
 
 ## What can break
 

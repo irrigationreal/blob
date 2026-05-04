@@ -128,6 +128,7 @@ echo "==> firewall"
 ufw allow 22/tcp || true
 ufw allow 80/tcp || true
 ufw allow 443/tcp || true
+ufw allow 20000:20099/tcp || true
 ufw --force enable || true
 
 echo "==> registry credentials"

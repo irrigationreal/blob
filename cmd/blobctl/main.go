@@ -44,6 +44,8 @@ Usage:
   blob deploy --static [--root DIR]               Force static-site form (else auto-detected
                                                   from index.html when no blob.yaml exists)
   blob deploy --function [--handler FILE]         Deploy an HTTP function (Node.js handler)
+  blob deploy --form daemon --exposure tcp --port P
+                                                  Deploy a non-HTTP TCP service
   blob deploy --from <kind> <path>                Import then deploy in one shot
   blob list                                       List apps
   blob status <app>                               Show one app
@@ -102,6 +104,11 @@ Usage:
   blob monitors list
   blob monitors show <name>
   blob monitors remove <name> [--yes]
+
+  blob tcp add <app> [--public-port P] [--target-port P]
+  blob tcp list
+  blob tcp show <public-port>
+  blob tcp remove <public-port> [--yes]
 
   blob plugins set <app> [--pre CMD] [--post CMD] [--timeout S]
   blob plugins list
@@ -216,7 +223,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.42.0"
+var version = "0.43.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -284,6 +291,8 @@ func main() {
 		cmdMonitors(args)
 	case "plugins", "plugin":
 		cmdPlugins(args)
+	case "tcp":
+		cmdTCP(args)
 	case "volumes":
 		cmdVolumes(args)
 	case "secrets":
@@ -590,6 +599,7 @@ func componentToReq(app string, c *manifest.Component, env string) *api.DeployRe
 		Domain:      c.Domain,
 		Domains:     c.Domains,
 		Port:        c.Port,
+		Exposure:    c.Exposure,
 		CPU:         c.CPU,
 		Memory:      c.Memory,
 		Replicas:    c.Replicas,
@@ -722,6 +732,9 @@ func cmdDeploy(args []string) {
 	}
 	if v := flags["form"]; v != "" {
 		m.Form = v
+	}
+	if v := flags["exposure"]; v != "" {
+		m.Exposure = v
 	}
 	if flags["function"] == "true" {
 		m.Form = "function"
@@ -1871,6 +1884,81 @@ func printMonitor(mon api.Monitor) {
 	}
 	if mon.AlertWebhookConfigured {
 		fmt.Println("webhook:  configured")
+	}
+}
+
+func cmdTCP(args []string) {
+	if len(args) == 0 {
+		die("usage: blob tcp <add|list|show|remove> ...")
+	}
+	c := mustClient()
+	switch args[0] {
+	case "list", "ls":
+		out, err := c.ListTCP(context.Background())
+		if err != nil {
+			die("%v", err)
+		}
+		if len(out.Bindings) == 0 {
+			fmt.Println("no public tcp bindings")
+			return
+		}
+		fmt.Printf("%-25s %-12s %-12s %-24s %s\n", "APP", "PUBLIC", "TARGET", "ENTRYPOINT", "URL")
+		for _, b := range out.Bindings {
+			fmt.Printf("%-25s %-12d %-12d %-24s %s\n", b.App, b.PublicPort, b.TargetPort, b.Entrypoint, b.URL)
+		}
+	case "add":
+		flags := parseFlags(args[1:])
+		app := positional(flags, 0)
+		if app == "" {
+			die("usage: blob tcp add <app> [--public-port P] [--target-port P]")
+		}
+		out, err := c.AddTCP(context.Background(), &api.AddTCPRequest{
+			App:        app,
+			PublicPort: atoi(flags["public-port"]),
+			TargetPort: atoi(flags["target-port"]),
+		})
+		if err != nil {
+			die("%v", err)
+		}
+		b := out.Binding
+		fmt.Printf("bound %s tcp/%d -> %s:%d\n", b.App, b.PublicPort, b.App, b.TargetPort)
+		fmt.Printf("url: %s\n", b.URL)
+		if out.Note != "" {
+			fmt.Println(out.Note)
+		}
+	case "show":
+		flags := parseFlags(args[1:])
+		port := atoi(positional(flags, 0))
+		if port <= 0 {
+			die("usage: blob tcp show <public-port>")
+		}
+		b, err := c.GetTCP(context.Background(), port)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("app:        %s\n", b.App)
+		fmt.Printf("host:       %s\n", b.Host)
+		fmt.Printf("public:     %d\n", b.PublicPort)
+		fmt.Printf("target:     %d\n", b.TargetPort)
+		fmt.Printf("entrypoint: %s\n", b.Entrypoint)
+		fmt.Printf("url:        %s\n", b.URL)
+		fmt.Printf("created:    %s\n", b.CreatedAt.Format(time.RFC3339))
+	case "remove", "rm":
+		flags := parseFlags(args[1:])
+		port := atoi(positional(flags, 0))
+		if port <= 0 {
+			die("usage: blob tcp remove <public-port> [--yes]")
+		}
+		if flags["yes"] != "true" {
+			want := fmt.Sprintf("%d", port)
+			confirmUnlessYes(flags, want, "remove public tcp binding %d? type %s to confirm: ", port, want)
+		}
+		if err := c.RemoveTCP(context.Background(), port); err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("removed tcp/%d\n", port)
+	default:
+		die("unknown tcp subcommand: %s", args[0])
 	}
 }
 

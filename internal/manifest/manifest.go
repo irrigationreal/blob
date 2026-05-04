@@ -17,7 +17,8 @@ type Component struct {
 	Form      string            `yaml:"form,omitempty"`      // web-service | daemon | job | cronjob | static | function
 	Domain    string            `yaml:"domain,omitempty"`    // overrides default <name>.<base>
 	Domains   []string          `yaml:"domains,omitempty"`   // additional hostnames
-	Port      int               `yaml:"port,omitempty"`      // required for web-service unless inferable
+	Port      int               `yaml:"port,omitempty"`      // required for web-service unless inferable; container port for exposure: tcp
+	Exposure  string            `yaml:"exposure,omitempty"`  // tcp for public TCP daemon workloads
 	Image     string            `yaml:"image,omitempty"`     // if set, deploy registry image directly
 	Command   []string          `yaml:"command,omitempty"`   // override the image's entrypoint command
 	Isolation string            `yaml:"isolation,omitempty"` // docker | kata
@@ -148,6 +149,7 @@ func (c *Component) applyDefaults() {
 		c.Replicas = 1
 	}
 	c.Name = strings.ToLower(strings.TrimSpace(c.Name))
+	c.Exposure = strings.ToLower(strings.TrimSpace(c.Exposure))
 	c.Isolation = strings.ToLower(strings.TrimSpace(c.Isolation))
 }
 
@@ -199,6 +201,19 @@ func (c *Component) validate() error {
 	case "", "docker", "kata":
 	default:
 		return fmt.Errorf("unknown isolation %q", c.Isolation)
+	}
+	switch c.Exposure {
+	case "", "tcp":
+	default:
+		return fmt.Errorf("unknown exposure %q", c.Exposure)
+	}
+	if c.Exposure == "tcp" {
+		if c.Form != "daemon" {
+			return fmt.Errorf("exposure: tcp requires form: daemon")
+		}
+		if c.Port <= 0 {
+			return fmt.Errorf("exposure: tcp requires port")
+		}
 	}
 	if c.Form == "cronjob" && c.Schedule == "" {
 		return fmt.Errorf("cronjob requires schedule")

@@ -24,6 +24,7 @@ type jobProjection struct {
 	App        string            `json:"app"`
 	Env        string            `json:"env,omitempty"`
 	Form       string            `json:"form"`
+	Exposure   string            `json:"exposure,omitempty"`
 	Isolation  string            `json:"isolation,omitempty"`
 	Domains    []string          `json:"domains,omitempty"`
 	Command    []string          `json:"command,omitempty"`
@@ -68,6 +69,7 @@ func hashJobProjection(req *api.DeployRequest, image string, port int, domain, d
 		App:        req.App,
 		Env:        req.Environment,
 		Form:       req.Form,
+		Exposure:   strings.ToLower(strings.TrimSpace(req.Exposure)),
 		Isolation:  normalizeIsolation(req.Isolation),
 		Domains:    req.Domains,
 		Command:    req.Command,

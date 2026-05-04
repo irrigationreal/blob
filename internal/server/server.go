@@ -152,6 +152,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/v1/monitors/", s.handleMonitorItem)
 	mux.HandleFunc("/v1/plugins", s.handlePlugins)
 	mux.HandleFunc("/v1/plugins/", s.handlePluginItem)
+	mux.HandleFunc("/v1/tcp", s.handleTCP)
+	mux.HandleFunc("/v1/tcp/", s.handleTCPItem)
 	mux.HandleFunc("/v1/costs", s.handleCosts)
 	mux.HandleFunc("/v1/costs/", s.handleCosts)
 	mux.HandleFunc("/v1/nodes", s.handleNodes)
@@ -1042,11 +1044,21 @@ func (s *Server) scheduleJob(ctx context.Context, req *api.DeployRequest, image 
 		return err
 	}
 	normalizeDeployRequestForRender(req)
+	if err := validateTCPExposureRequest(req); err != nil {
+		return err
+	}
 	if err := s.preflightPlacement(ctx, req); err != nil {
 		return err
 	}
 	req.ProjectionHash = hashJobProjection(req, image, port, domain, s.cfg.Datacenter, id)
 	hcl := renderJob(req, image, port, domain, s.cfg.Datacenter, id)
+	if req.Exposure == "tcp" {
+		var err error
+		hcl, err = s.addExistingTCPBindingsToJob(id, hcl)
+		if err != nil {
+			return err
+		}
+	}
 	jobPath := filepath.Join(s.cfg.JobsDir, id+".nomad")
 	if err := os.WriteFile(jobPath, []byte(hcl), 0o644); err != nil {
 		return err
@@ -1058,8 +1070,10 @@ func (s *Server) scheduleJob(ctx context.Context, req *api.DeployRequest, image 
 		App:            req.App,
 		Environment:    req.Environment,
 		Form:           req.Form,
+		Exposure:       req.Exposure,
 		Isolation:      normalizeIsolation(req.Isolation),
 		Domain:         domain,
+		Port:           port,
 		Image:          image,
 		Services:       req.Services,
 		ProjectionHash: req.ProjectionHash,
@@ -1078,8 +1092,10 @@ type jobMeta struct {
 	App            string    `json:"app"`
 	Environment    string    `json:"environment"`
 	Form           string    `json:"form"`
+	Exposure       string    `json:"exposure,omitempty"`
 	Isolation      string    `json:"isolation,omitempty"`
 	Domain         string    `json:"domain"`
+	Port           int       `json:"port,omitempty"`
 	Image          string    `json:"image"`
 	Services       []string  `json:"services,omitempty"`
 	ProjectionHash string    `json:"projection_hash,omitempty"`

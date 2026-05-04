@@ -190,7 +190,7 @@ Once a Prometheus is registered, `/metrics` on blobd is scraped automatically. A
 
 ### UFW for managed-service ports
 
-`bootstrap-host.sh` only opens 22/80/443. Apply these once before creating any managed service — without them the docker bridge can't reach the data plane:
+`bootstrap-host.sh` opens 22/80/443 plus the public TCP service pool. Apply these once before creating any managed service — without them the docker bridge can't reach the data plane:
 
 ```sh
 sudo ufw allow 13000:13400/tcp comment "blob-observability"   # Loki, Grafana, Tempo, Prometheus

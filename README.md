@@ -76,6 +76,7 @@ The same platform host runs these via `blob import compose|procfile|fly` → `bl
 | **Service rollup**: `blob services list` shows postgres/valkey/loki/grafana/promtail/nats/tempo/prometheus in one table | shipped  |
 | **Managed Valkey** (Redis-compatible) with `services:` env injection (`REDIS_URL`) | shipped  |
 | **Custom domains** with `blob domains attach` (auto-HTTPS)     | shipped  |
+| **Public TCP services** with `exposure: tcp` + `blob tcp add`  | shipped  |
 | **Multiple hostnames** per app                                 | shipped  |
 | **Scaling** (`blob scale`)                                     | shipped  |
 | **Restart** (`blob restart`)                                   | shipped  |
@@ -122,6 +123,7 @@ Three short docs:
 - **[`docs/costs.md`](docs/costs.md)** — resource accounting and optional monthly cost rollups.
 - **[`docs/web-console.md`](docs/web-console.md)** — server-rendered authenticated operator UI at `/ui`.
 - **[`docs/managed-services.md`](docs/managed-services.md)** — managed Postgres: create, bind apps via `services:`, get the DSN, destroy.
+- **[`docs/tcp-services.md`](docs/tcp-services.md)** — expose daemon workloads on public TCP ports.
 - **[`docs/status-pages.md`](docs/status-pages.md)** — public app status pages with HTML + JSON output.
 - **[`docs/monitors.md`](docs/monitors.md)** — persisted HTTP checks and alert webhooks.
 
@@ -176,6 +178,19 @@ runtime: nodejs
 ```
 
 The handler exports `default` or `handler` and receives an HTTP event with `method`, `path`, `query`, `headers`, `body`, and `rawBody`. Blob wraps it in a tiny Node HTTP server on port 8080 and publishes the same HTTPS route as a web service.
+
+### Public TCP daemon
+
+```yaml
+name: tcp-echo
+form: daemon
+image: hashicorp/http-echo:1.0.0
+command: ["/http-echo", "-listen=:5678", "-text=tcp-ok"]
+port: 5678
+exposure: tcp
+```
+
+After deploy, run `blob tcp add tcp-echo` to allocate a public port.
 
 ### Cronjob
 
@@ -271,6 +286,11 @@ blob monitors add <app> [--path P] [--interval S] [--webhook URL]
 blob monitors list
 blob monitors show <name>
 blob monitors remove <name> [--yes]
+
+blob tcp add <app> [--public-port P] [--target-port P]
+blob tcp list
+blob tcp show <public-port>
+blob tcp remove <public-port> [--yes]
 
 blob secrets list [--env ENV]
 blob secrets set <name> [--env ENV] [--from FILE | --value V]

@@ -1123,6 +1123,36 @@ func (c *Client) RemoveCert(ctx context.Context, hostname string) error {
 	return c.do(ctx, "DELETE", "/v1/certs/"+url.PathEscape(hostname), nil, nil)
 }
 
+// --- Public TCP exposure (v0.43) ---
+
+func (c *Client) ListTCP(ctx context.Context) (*api.ListTCPResponse, error) {
+	out := &api.ListTCPResponse{}
+	if err := c.do(ctx, "GET", "/v1/tcp", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) AddTCP(ctx context.Context, req *api.AddTCPRequest) (*api.AddTCPResponse, error) {
+	out := &api.AddTCPResponse{}
+	if err := c.do(ctx, "POST", "/v1/tcp", req, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) GetTCP(ctx context.Context, publicPort int) (*api.TCPBinding, error) {
+	out := &api.TCPBinding{}
+	if err := c.do(ctx, "GET", "/v1/tcp/"+fmt.Sprintf("%d", publicPort), nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) RemoveTCP(ctx context.Context, publicPort int) error {
+	return c.do(ctx, "DELETE", "/v1/tcp/"+fmt.Sprintf("%d", publicPort), nil, nil)
+}
+
 // --- Jobs (v0.23) ---
 
 func (c *Client) RunJob(ctx context.Context, req *api.RunJobRequest) (*api.JobRun, error) {

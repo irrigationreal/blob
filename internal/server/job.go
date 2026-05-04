@@ -52,12 +52,29 @@ func normalizeDeployRequestForRender(req *api.DeployRequest) {
 	if req.Replicas <= 0 {
 		req.Replicas = 1
 	}
+	req.Exposure = strings.ToLower(strings.TrimSpace(req.Exposure))
 	if req.Form == "" {
 		req.Form = "web-service"
 	}
 	if normalizeIsolation(req.Isolation) == "" {
 		req.Isolation = ""
 	}
+}
+
+func validateTCPExposureRequest(req *api.DeployRequest) error {
+	if req.Exposure == "" {
+		return nil
+	}
+	if req.Exposure != "tcp" {
+		return fmt.Errorf("unknown exposure %q", req.Exposure)
+	}
+	if req.Form != "daemon" {
+		return fmt.Errorf("exposure: tcp requires form: daemon")
+	}
+	if req.Port <= 0 {
+		return fmt.Errorf("exposure: tcp requires port")
+	}
+	return nil
 }
 
 func normalizeIsolation(isolation string) string {
@@ -173,6 +190,9 @@ func renderDaemon(id, dc, image string, req *api.DeployRequest, envBlock, volBlo
 	projectionMeta := renderProjectionMeta(req.ProjectionHash)
 	constraintBlock := renderIsolationConstraint(req.Isolation)
 	runtimeBlock := renderDockerRuntime(req.Isolation)
+	if req.Exposure == "tcp" {
+		return renderTCPDaemon(id, dc, image, req, envBlock, volBlocks, volMounts, sidecars, cmdBlock, projectionMeta, constraintBlock, runtimeBlock)
+	}
 	return fmt.Sprintf(`job %q {
   datacenters = [%q]
   type = "service"
@@ -193,6 +213,44 @@ func renderDaemon(id, dc, image string, req *api.DeployRequest, envBlock, volBlo
 %s  }
 }
 `, id, dc, projectionMeta, req.Replicas, constraintBlock, volBlocks, image, runtimeBlock, cmdBlock, volMounts, envBlock, req.CPU, req.Memory, sidecars)
+}
+
+func renderTCPDaemon(id, dc, image string, req *api.DeployRequest, envBlock, volBlocks, volMounts, sidecars, cmdBlock, projectionMeta, constraintBlock, runtimeBlock string) string {
+	return fmt.Sprintf(`job %q {
+  datacenters = [%q]
+  type = "service"
+%s
+  group "main" {
+    count = %d
+%s%s
+    network {
+      port "tcp" {
+        to = %d
+      }
+    }
+
+    service {
+      name     = %q
+      provider = "nomad"
+      port     = "tcp"
+      tags = [
+      ]
+    }
+
+    task "app" {
+      driver = "docker"
+      config {
+        image = %q
+        ports = ["tcp"]
+%s%s%s      }
+%s      resources {
+        cpu    = %d
+        memory = %d
+      }
+    }
+%s  }
+}
+`, id, dc, projectionMeta, req.Replicas, constraintBlock, volBlocks, req.Port, id, image, runtimeBlock, cmdBlock, volMounts, envBlock, req.CPU, req.Memory, sidecars)
 }
 
 func renderBatch(id, dc, image string, req *api.DeployRequest, envBlock, volBlocks, volMounts, sidecars string, periodic bool, cron string) string {

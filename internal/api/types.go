@@ -20,6 +20,7 @@ type DeployRequest struct {
 	Secrets     []SecretBinding   `json:"secrets,omitempty"`
 	Services    []string          `json:"services,omitempty"` // names of managed services to bind (e.g. ["my-pg"])
 	Form        string            `json:"form,omitempty"`     // web-service | daemon | job | cronjob | static | function
+	Exposure    string            `json:"exposure,omitempty"` // tcp for public TCP services on daemon workloads
 	Schedule    string            `json:"schedule,omitempty"` // cron expression for cronjob
 	Volumes     []VolumeMount     `json:"volumes,omitempty"`
 	Sidecars    []Sidecar         `json:"sidecars,omitempty"`
@@ -548,6 +549,33 @@ type JoinTokenResponse struct {
 	Address    string `json:"address"`     // host:port of Nomad server
 	Token      string `json:"token"`       // bootstrap token (or empty if ACLs disabled)
 	JoinScript string `json:"join_script"` // sh one-liner for the new node
+}
+
+// Public TCP exposure
+
+type TCPBinding struct {
+	App        string    `json:"app"`
+	Host       string    `json:"host"`
+	PublicPort int       `json:"public_port"`
+	TargetPort int       `json:"target_port"`
+	Entrypoint string    `json:"entrypoint"`
+	URL        string    `json:"url"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+type AddTCPRequest struct {
+	App        string `json:"app"`
+	PublicPort int    `json:"public_port,omitempty"`
+	TargetPort int    `json:"target_port,omitempty"`
+}
+
+type AddTCPResponse struct {
+	Binding TCPBinding `json:"binding"`
+	Note    string     `json:"note,omitempty"`
+}
+
+type ListTCPResponse struct {
+	Bindings []TCPBinding `json:"bindings"`
 }
 
 // Custom domain attach. Mode is one of: platform-base, user-managed, user-external.
