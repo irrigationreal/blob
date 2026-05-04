@@ -35,6 +35,7 @@ Usage:
   blob import vercel <path>                       Translate vercel.json → blob.yaml
   blob import nix <path>                          Translate flake.nix → blob.yaml + Dockerfile
   blob import helm <path>                         Translate a Helm chart → blob.yaml
+  blob import kubernetes <path>                   Translate Kubernetes YAML → blob.yaml
   blob login --endpoint URL [--token T]           Save endpoint and token
   blob deploy [--name N] [--port P] [--env ENV]   Deploy current folder
        [--cpu C] [--memory M] [--replicas N]
@@ -204,7 +205,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.37.0"
+var version = "0.38.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -414,7 +415,7 @@ func cmdInit(args []string) {
 // couldn't be translated, and shows a diff vs any existing blob.yaml.
 func cmdImport(args []string) {
 	if len(args) < 2 {
-		die("usage: blob import <compose|procfile|fly|nextjs|netlify|render|vercel|nix|helm> <path> [--out PATH] [--yes]")
+		die("usage: blob import <compose|procfile|fly|nextjs|netlify|render|vercel|nix|helm|kubernetes> <path> [--out PATH] [--yes]")
 	}
 	kind, srcPath := args[0], args[1]
 	flags := parseFlags(args[2:])
@@ -443,8 +444,10 @@ func cmdImport(args []string) {
 		res, err = importers.NixFlake(srcPath)
 	case "helm":
 		res, err = importers.Helm(srcPath)
+	case "kubernetes", "k8s":
+		res, err = importers.Kubernetes(srcPath)
 	default:
-		die("unknown import kind %q (expected: compose | procfile | fly | nextjs | netlify | render | vercel | nix | helm)", kind)
+		die("unknown import kind %q (expected: compose | procfile | fly | nextjs | netlify | render | vercel | nix | helm | kubernetes)", kind)
 	}
 	if err != nil {
 		die("import %s: %v", kind, err)
@@ -590,7 +593,7 @@ func cmdDeploy(args []string) {
 	if kind := flags["from"]; kind != "" {
 		path := positional(flags, 0)
 		if path == "" {
-			die("usage: blob deploy --from <compose|procfile|fly|nextjs|netlify|render|vercel|nix|helm> <path>")
+			die("usage: blob deploy --from <compose|procfile|fly|nextjs|netlify|render|vercel|nix|helm|kubernetes> <path>")
 		}
 		// Force overwrite — operator opted in by passing --from.
 		cmdImport([]string{kind, path, "--yes"})

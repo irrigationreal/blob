@@ -243,6 +243,100 @@ metadata:
 	}
 }
 
+func TestKubernetesImporterDirectory(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "deployment.yaml"), `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kube-demo
+spec:
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: kube-demo
+    spec:
+      containers:
+        - name: web
+          image: nginx:alpine
+          ports:
+            - name: http
+              containerPort: 8080
+`)
+	writeTestFile(t, filepath.Join(dir, "service.yaml"), `apiVersion: v1
+kind: Service
+metadata:
+  name: kube-demo
+spec:
+  selector:
+    app: kube-demo
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+`)
+	writeTestFile(t, filepath.Join(dir, "ingress.yaml"), `apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kube-demo
+spec:
+  rules:
+    - host: kube.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kube-demo
+                port:
+                  name: http
+`)
+	writeTestFile(t, filepath.Join(dir, "secret.yaml"), `apiVersion: v1
+kind: Secret
+metadata:
+  name: kube-demo-secret
+`)
+	res, err := Kubernetes(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := res.Manifest
+	if res.Source != "kubernetes" || m.Name != "kube-demo" || m.Form != "web-service" || m.Port != 8080 || m.Replicas != 2 || m.Domain != "kube.example.com" {
+		t.Fatalf("manifest = %+v", m.Component)
+	}
+	if !strings.Contains(strings.Join(res.Warnings, "\n"), "Secret/kube-demo-secret dropped") {
+		t.Fatalf("expected secret warning, got %#v", res.Warnings)
+	}
+}
+
+func TestKubernetesImporterFileCronJob(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cleanup.yaml")
+	writeTestFile(t, path, `apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cleanup
+spec:
+  schedule: "*/10 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: cleanup
+              image: alpine:3.21
+              args: ["sh", "-c", "echo ok"]
+`)
+	res, err := Kubernetes(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Manifest.Form != "cronjob" || res.Manifest.Schedule != "*/10 * * * *" || res.Manifest.Image != "alpine:3.21" || strings.Join(res.Manifest.Command, " ") != "sh -c echo ok" {
+		t.Fatalf("manifest = %+v", res.Manifest.Component)
+	}
+}
+
 func withFakeHelm(t *testing.T, rendered string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {

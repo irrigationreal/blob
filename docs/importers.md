@@ -9,7 +9,7 @@ blob from-netlify <dir-or-netlify.toml> [--yes]
 blob deploy --from <kind> <path>
 ```
 
-Available kinds: `compose`, `procfile`, `fly`, `nextjs`, `netlify`, `render`, `vercel`, `nix`, `helm`.
+Available kinds: `compose`, `procfile`, `fly`, `nextjs`, `netlify`, `render`, `vercel`, `nix`, `helm`, `kubernetes`.
 
 Every importer prints the generated YAML and a list of warnings about anything it could not translate. Existing files are not overwritten unless `--yes` is passed.
 
@@ -32,6 +32,17 @@ Accepts a chart directory or packaged `chart.tgz`. The importer runs `helm templ
 | extra containers | `sidecars:` |
 
 Dropped with warnings: ConfigMaps, Secrets, RBAC, service accounts, HPAs, PDBs, NetworkPolicies, probes, init containers, pod scheduling fields, security context, image pull secrets, non-PVC volumes, service types, Ingress TLS secrets, and path routing. Recreate those as Blob secrets, managed services, deploy plugins, autoscaling, or edge/app config.
+
+## Kubernetes manifests (`import kubernetes`)
+
+Accepts a single `.yaml` / `.yml` file or a directory. Directories are read recursively and all YAML documents are translated with the same Kubernetes object mapper used by the Helm importer.
+
+```sh
+blob import kubernetes ./k8s
+blob deploy --from kubernetes ./k8s
+```
+
+Supported objects and warnings match the Helm table above. Use this path when a project already has rendered manifests or Kustomize output and there is no Helm chart to render first.
 
 ## Render (`import render`)
 

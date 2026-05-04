@@ -2,7 +2,9 @@ package importers
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,25 +36,29 @@ func Helm(path string) (*Result, error) {
 }
 
 func helmRendered(chartName string, rendered []byte) (*Result, error) {
-	res := &Result{Source: "helm"}
+	return kubernetesObjectsRendered("helm", chartName, rendered)
+}
+
+func kubernetesObjectsRendered(source, appName string, rendered []byte) (*Result, error) {
+	res := &Result{Source: source}
 	objects, err := decodeHelmObjects(rendered)
 	if err != nil {
 		return nil, err
 	}
 	if len(objects) == 0 {
-		return nil, fmt.Errorf("helm template produced no Kubernetes objects")
+		return nil, fmt.Errorf("%s import produced no Kubernetes objects", source)
 	}
 
-	services := map[string]helmService{}
-	serviceOrder := []string{}
+	services := []helmService{}
+	serviceByName := map[string]helmService{}
 	ingresses := []helmIngress{}
 	workloads := []helmWorkload{}
 	for _, obj := range objects {
 		switch obj.Kind {
 		case "Service":
 			svc := helmServiceFromObject(obj, res)
-			services[svc.Name] = svc
-			serviceOrder = append(serviceOrder, svc.Name)
+			services = append(services, svc)
+			serviceByName[svc.Name] = svc
 		case "Ingress":
 			ingresses = append(ingresses, helmIngressFromObject(obj, res))
 		case "Deployment", "StatefulSet", "DaemonSet", "ReplicaSet":
@@ -71,10 +77,10 @@ func helmRendered(chartName string, rendered []byte) (*Result, error) {
 		return nil, fmt.Errorf("helm chart has no translatable workloads")
 	}
 
-	ingressHosts := helmIngressHostsByService(ingresses)
+	ingressRoutes := helmIngressRoutesByService(ingresses)
 	components := make([]manifest.Component, 0, len(workloads))
 	for _, wl := range workloads {
-		c := helmComponentFromWorkload(wl, services, serviceOrder, ingressHosts, res)
+		c := helmComponentFromWorkload(wl, services, serviceByName, ingressRoutes, res)
 		components = append(components, c)
 	}
 
@@ -85,9 +91,9 @@ func helmRendered(chartName string, rendered []byte) (*Result, error) {
 			m.Name = components[0].Name
 		}
 	} else {
-		m.Name = sanitizeName(chartName)
+		m.Name = sanitizeName(appName)
 		if m.Name == "" {
-			m.Name = "helm-app"
+			m.Name = source + "-app"
 		}
 		m.Components = components
 	}
@@ -99,17 +105,14 @@ func helmRendered(chartName string, rendered []byte) (*Result, error) {
 }
 
 type helmObject struct {
-	APIVersion string         `yaml:"apiVersion"`
-	Kind       string         `yaml:"kind"`
-	Metadata   helmMetadata   `yaml:"metadata"`
-	Spec       map[string]any `yaml:"spec"`
-	Raw        map[string]any `yaml:",inline"`
+	Kind     string         `yaml:"kind"`
+	Metadata helmMetadata   `yaml:"metadata"`
+	Spec     map[string]any `yaml:"spec"`
 }
 
 type helmMetadata struct {
-	Name        string            `yaml:"name"`
-	Labels      map[string]string `yaml:"labels"`
-	Annotations map[string]string `yaml:"annotations"`
+	Name   string            `yaml:"name"`
+	Labels map[string]string `yaml:"labels"`
 }
 
 type helmService struct {
@@ -126,22 +129,24 @@ type helmServicePort struct {
 }
 
 type helmIngress struct {
-	Name         string
-	HostsBySvc   map[string][]string
+	RoutesBySvc  map[string][]helmIngressRoute
 	HasPathRules bool
-	HasTLS       bool
+}
+
+type helmIngressRoute struct {
+	Host        string
+	ServicePort string
 }
 
 type helmWorkload struct {
-	Kind        string
-	Name        string
-	Labels      map[string]string
-	PodLabels   map[string]string
-	Replicas    int
-	Schedule    string
-	Containers  []helmContainer
-	Volumes     []helmVolume
-	Unsupported []string
+	Kind       string
+	Name       string
+	Labels     map[string]string
+	PodLabels  map[string]string
+	Replicas   int
+	Schedule   string
+	Containers []helmContainer
+	Volumes    []helmVolume
 }
 
 type helmContainer struct {
@@ -150,7 +155,6 @@ type helmContainer struct {
 	Ports        []helmContainerPort
 	Env          map[string]string
 	Command      []string
-	Args         []string
 	CPU          int
 	Memory       int
 	VolumeMounts []helmVolumeMount
@@ -180,7 +184,7 @@ func decodeHelmObjects(rendered []byte) ([]helmObject, error) {
 		var obj helmObject
 		err := dec.Decode(&obj)
 		if err != nil {
-			if err.Error() == "EOF" {
+			if errors.Is(err, io.EOF) {
 				break
 			}
 			return nil, fmt.Errorf("parse helm output: %w", err)
@@ -214,9 +218,8 @@ func helmServiceFromObject(obj helmObject, res *Result) helmService {
 }
 
 func helmIngressFromObject(obj helmObject, res *Result) helmIngress {
-	in := helmIngress{Name: obj.Metadata.Name, HostsBySvc: map[string][]string{}}
+	in := helmIngress{RoutesBySvc: map[string][]helmIngressRoute{}}
 	if len(listMaps(obj.Spec["tls"])) > 0 {
-		in.HasTLS = true
 		res.Warnings = append(res.Warnings, fmt.Sprintf("Ingress/%s TLS secret config dropped - Blob manages HTTPS at the edge", obj.Metadata.Name))
 	}
 	for _, rule := range listMaps(obj.Spec["rules"]) {
@@ -229,17 +232,17 @@ func helmIngressFromObject(obj helmObject, res *Result) helmIngress {
 			if p := stringField(path, "path"); p != "" && p != "/" {
 				in.HasPathRules = true
 			}
-			svcName := ingressBackendServiceName(path["backend"])
+			svcName, svcPort := ingressBackendService(path["backend"])
 			if svcName == "" {
 				res.Warnings = append(res.Warnings, fmt.Sprintf("Ingress/%s backend without service name dropped", obj.Metadata.Name))
 				continue
 			}
 			if host != "" {
-				in.HostsBySvc[svcName] = appendUnique(in.HostsBySvc[svcName], host)
+				in.RoutesBySvc[svcName] = appendUniqueRoute(in.RoutesBySvc[svcName], helmIngressRoute{Host: host, ServicePort: svcPort})
 			}
 		}
 	}
-	if len(in.HostsBySvc) == 0 {
+	if len(in.RoutesBySvc) == 0 {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("Ingress/%s has no host/service rules - dropped", obj.Metadata.Name))
 	}
 	if in.HasPathRules {
@@ -261,7 +264,7 @@ func helmWorkloadFromObject(obj helmObject, res *Result) helmWorkload {
 	if len(wl.PodLabels) == 0 {
 		wl.PodLabels = wl.Labels
 	}
-	wl.Containers, wl.Volumes, wl.Unsupported = helmPodSpec(tmpl["spec"], obj.Kind+"/"+obj.Metadata.Name, res)
+	wl.Containers, wl.Volumes = helmPodSpec(tmpl["spec"], obj.Kind+"/"+obj.Metadata.Name, res)
 	if len(listMaps(obj.Spec["volumeClaimTemplates"])) > 0 {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("StatefulSet/%s volumeClaimTemplates dropped - create Blob volumes manually", obj.Metadata.Name))
 	}
@@ -272,7 +275,7 @@ func helmJobFromObject(obj helmObject, res *Result) helmWorkload {
 	wl := helmWorkload{Kind: obj.Kind, Name: obj.Metadata.Name, Labels: obj.Metadata.Labels, Replicas: 1}
 	tmpl, _ := obj.Spec["template"].(map[string]any)
 	wl.PodLabels = metadataLabels(tmpl["metadata"])
-	wl.Containers, wl.Volumes, wl.Unsupported = helmPodSpec(tmpl["spec"], obj.Kind+"/"+obj.Metadata.Name, res)
+	wl.Containers, wl.Volumes = helmPodSpec(tmpl["spec"], obj.Kind+"/"+obj.Metadata.Name, res)
 	return wl
 }
 
@@ -282,14 +285,14 @@ func helmCronJobFromObject(obj helmObject, res *Result) helmWorkload {
 	jobSpec, _ := jobTemplate["spec"].(map[string]any)
 	tmpl, _ := jobSpec["template"].(map[string]any)
 	wl.PodLabels = metadataLabels(tmpl["metadata"])
-	wl.Containers, wl.Volumes, wl.Unsupported = helmPodSpec(tmpl["spec"], obj.Kind+"/"+obj.Metadata.Name, res)
+	wl.Containers, wl.Volumes = helmPodSpec(tmpl["spec"], obj.Kind+"/"+obj.Metadata.Name, res)
 	if wl.Schedule == "" {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("CronJob/%s missing schedule - add schedule: before deploy", obj.Metadata.Name))
 	}
 	return wl
 }
 
-func helmPodSpec(v any, owner string, res *Result) ([]helmContainer, []helmVolume, []string) {
+func helmPodSpec(v any, owner string, res *Result) ([]helmContainer, []helmVolume) {
 	spec, _ := v.(map[string]any)
 	var unsupported []string
 	for _, field := range []string{"initContainers", "serviceAccountName", "nodeSelector", "tolerations", "affinity", "securityContext", "imagePullSecrets", "hostNetwork", "dnsPolicy", "priorityClassName"} {
@@ -308,18 +311,18 @@ func helmPodSpec(v any, owner string, res *Result) ([]helmContainer, []helmVolum
 	if len(containers) == 0 {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("%s has no containers", owner))
 	}
-	return containers, volumes, unsupported
+	return containers, volumes
 }
 
 func helmContainerFromMap(c map[string]any, owner string, res *Result) helmContainer {
 	out := helmContainer{Name: stringField(c, "name"), Image: stringField(c, "image"), Env: map[string]string{}}
-	out.Command = stringSlice(c["command"])
-	out.Args = stringSlice(c["args"])
-	if len(out.Command) == 0 && len(out.Args) > 0 {
-		out.Command = out.Args
+	out.Command = flattenCmd(c["command"])
+	args := flattenCmd(c["args"])
+	if len(out.Command) == 0 && len(args) > 0 {
+		out.Command = args
 		res.Warnings = append(res.Warnings, fmt.Sprintf("%s container %q has args without command - imported args as Blob command override", owner, out.Name))
-	} else if len(out.Command) > 0 && len(out.Args) > 0 {
-		out.Command = append(out.Command, out.Args...)
+	} else if len(out.Command) > 0 && len(args) > 0 {
+		out.Command = append(out.Command, args...)
 	}
 	for _, ev := range listMaps(c["env"]) {
 		key := stringField(ev, "name")
@@ -360,7 +363,7 @@ func helmContainerFromMap(c map[string]any, owner string, res *Result) helmConta
 	return out
 }
 
-func helmComponentFromWorkload(wl helmWorkload, services map[string]helmService, serviceOrder []string, ingressHosts map[string][]string, res *Result) manifest.Component {
+func helmComponentFromWorkload(wl helmWorkload, services []helmService, serviceByName map[string]helmService, ingressRoutes map[string][]helmIngressRoute, res *Result) manifest.Component {
 	name := sanitizeName(wl.Name)
 	if name == "" {
 		name = "app"
@@ -387,14 +390,19 @@ func helmComponentFromWorkload(wl helmWorkload, services map[string]helmService,
 	}
 	c.Volumes = helmVolumeMounts(primary.VolumeMounts, wl.Volumes, wl.Kind+"/"+wl.Name, res)
 
-	svc, hasService := helmMatchService(wl, services, serviceOrder)
-	hosts := []string{}
+	svc, hasService := helmMatchService(wl, services, serviceByName)
+	routes := []helmIngressRoute{}
+	servicePort := ""
 	if hasService {
-		hosts = ingressHosts[svc.Name]
+		routes = ingressRoutes[svc.Name]
+		if len(routes) > 0 {
+			servicePort = routes[0].ServicePort
+		}
 	}
+	hosts := helmHostsFromRoutes(routes)
 	port := 0
 	if hasService {
-		port = helmServiceTargetPort(svc, primary)
+		port = helmServiceTargetPort(svc, primary, servicePort)
 	}
 	if port == 0 {
 		port = firstContainerPortNumber(primary)
@@ -432,14 +440,13 @@ func helmComponentFromWorkload(wl helmWorkload, services map[string]helmService,
 	return c
 }
 
-func helmMatchService(wl helmWorkload, services map[string]helmService, order []string) (helmService, bool) {
-	for _, name := range order {
-		svc := services[name]
+func helmMatchService(wl helmWorkload, services []helmService, serviceByName map[string]helmService) (helmService, bool) {
+	for _, svc := range services {
 		if selectorMatches(svc.Selector, wl.PodLabels) {
 			return svc, true
 		}
 	}
-	if svc, ok := services[wl.Name]; ok {
+	if svc, ok := serviceByName[wl.Name]; ok {
 		return svc, true
 	}
 	return helmService{}, false
@@ -457,11 +464,11 @@ func selectorMatches(selector, labels map[string]string) bool {
 	return true
 }
 
-func helmServiceTargetPort(svc helmService, c helmContainer) int {
-	if len(svc.Ports) == 0 {
+func helmServiceTargetPort(svc helmService, c helmContainer, servicePort string) int {
+	p, ok := helmSelectServicePort(svc, servicePort)
+	if !ok {
 		return 0
 	}
-	p := svc.Ports[0]
 	if n := parsePort(p.TargetPort); n > 0 {
 		return n
 	}
@@ -476,6 +483,20 @@ func helmServiceTargetPort(svc helmService, c helmContainer) int {
 	return 0
 }
 
+func helmSelectServicePort(svc helmService, servicePort string) (helmServicePort, bool) {
+	if servicePort != "" {
+		for _, p := range svc.Ports {
+			if p.Name == servicePort || strconv.Itoa(p.Port) == servicePort || p.TargetPort == servicePort {
+				return p, true
+			}
+		}
+	}
+	if len(svc.Ports) == 0 {
+		return helmServicePort{}, false
+	}
+	return svc.Ports[0], true
+}
+
 func firstContainerPortNumber(c helmContainer) int {
 	for _, p := range c.Ports {
 		if p.Port > 0 {
@@ -485,16 +506,24 @@ func firstContainerPortNumber(c helmContainer) int {
 	return 0
 }
 
-func helmIngressHostsByService(ingresses []helmIngress) map[string][]string {
-	out := map[string][]string{}
+func helmIngressRoutesByService(ingresses []helmIngress) map[string][]helmIngressRoute {
+	out := map[string][]helmIngressRoute{}
 	for _, in := range ingresses {
-		for svc, hosts := range in.HostsBySvc {
-			for _, host := range hosts {
-				out[svc] = appendUnique(out[svc], host)
+		for svc, routes := range in.RoutesBySvc {
+			for _, route := range routes {
+				out[svc] = appendUniqueRoute(out[svc], route)
 			}
 		}
 	}
 	return out
+}
+
+func helmHostsFromRoutes(routes []helmIngressRoute) []string {
+	var hosts []string
+	for _, route := range routes {
+		hosts = appendUnique(hosts, route.Host)
+	}
+	return hosts
 }
 
 func helmVolumes(v any, owner string, res *Result) []helmVolume {
@@ -690,30 +719,23 @@ func scalarString(v any) string {
 	}
 }
 
-func stringSlice(v any) []string {
-	xs, ok := v.([]any)
-	if !ok {
-		return nil
-	}
-	out := make([]string, 0, len(xs))
-	for _, x := range xs {
-		out = append(out, fmt.Sprint(x))
-	}
-	return out
-}
-
 func metadataLabels(v any) map[string]string {
 	m, _ := v.(map[string]any)
 	return stringMap(m["labels"])
 }
 
-func ingressBackendServiceName(v any) string {
+func ingressBackendService(v any) (string, string) {
 	backend, _ := v.(map[string]any)
 	service, _ := backend["service"].(map[string]any)
 	if service != nil {
-		return stringField(service, "name")
+		port, _ := service["port"].(map[string]any)
+		servicePort := stringField(port, "name")
+		if servicePort == "" {
+			servicePort = scalarString(port["number"])
+		}
+		return stringField(service, "name"), servicePort
 	}
-	return stringField(backend, "serviceName")
+	return stringField(backend, "serviceName"), scalarString(backend["servicePort"])
 }
 
 func appendUnique(xs []string, x string) []string {
@@ -726,6 +748,18 @@ func appendUnique(xs []string, x string) []string {
 		}
 	}
 	return append(xs, x)
+}
+
+func appendUniqueRoute(routes []helmIngressRoute, route helmIngressRoute) []helmIngressRoute {
+	if route.Host == "" {
+		return routes
+	}
+	for _, cur := range routes {
+		if cur.Host == route.Host && cur.ServicePort == route.ServicePort {
+			return routes
+		}
+	}
+	return append(routes, route)
 }
 
 func sortedKeys(m map[string]any) []string {
