@@ -26,7 +26,10 @@ var defaultExcludes = []string{
 }
 
 // Pack streams a gzipped tar of root to w. Top-level dirs/files matching
-// defaultExcludes are skipped.
+// defaultExcludes are skipped, plus any line in .blobignore at the root
+// (one entry per line, # comments allowed). The blobignore lines are
+// matched as exact dirname/basename — same shape as defaultExcludes —
+// not full glob patterns.
 func Pack(root string, w io.Writer) error {
 	gz := gzip.NewWriter(w)
 	defer gz.Close()
@@ -37,6 +40,16 @@ func Pack(root string, w io.Writer) error {
 	excl := map[string]struct{}{}
 	for _, e := range defaultExcludes {
 		excl[e] = struct{}{}
+	}
+	// Read .blobignore from root, if present. One pattern per line.
+	if b, err := os.ReadFile(filepath.Join(root, ".blobignore")); err == nil {
+		for _, line := range strings.Split(string(b), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			excl[line] = struct{}{}
+		}
 	}
 
 	return filepath.Walk(root, func(path string, info os.FileInfo, err error) error {

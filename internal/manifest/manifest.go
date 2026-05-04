@@ -36,6 +36,12 @@ type Component struct {
 	Index       string   `yaml:"index,omitempty"`       // index file (default: index.html)
 	NotFound    string   `yaml:"not_found,omitempty"`   // 404 path (e.g. /404.html); also used for SPA fallback when SPA is true
 	SPA         bool     `yaml:"spa,omitempty"`         // if true, serve index.html for any unmatched path (SPA routing)
+
+	// Static is a shorthand for `form: static, root: <dir>`. When set,
+	// it implies form: static unless the operator overrode form. Useful
+	// for the common case `static: dist` or `static: .`. Equivalent to
+	// writing `form: static / root: dist` longhand.
+	Static string `yaml:"static,omitempty"`
 }
 
 // Sidecar is a co-scheduled container in the same Nomad group.
@@ -101,6 +107,17 @@ func (m *Manifest) applyDefaults() {
 }
 
 func (c *Component) applyDefaults() {
+	// `static: <dir>` shorthand → form: static, root: <dir>. Applied
+	// before the form default so it doesn't get clobbered. The operator
+	// can still override either field longhand if they want.
+	if c.Static != "" {
+		if c.Form == "" {
+			c.Form = "static"
+		}
+		if c.Root == "" {
+			c.Root = c.Static
+		}
+	}
 	if c.Form == "" {
 		c.Form = "web-service"
 	}

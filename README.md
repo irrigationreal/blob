@@ -29,6 +29,9 @@ These are real side projects pulled out of `~/code` and deployed with no edits b
 - <https://dither-logo.irrigate.cc/>
 - <https://robot-avatar.irrigate.cc/>
 - <https://nye-2025.irrigate.cc/>
+- <https://magneto.irrigate.cc/> — added v0.15
+- <https://black-ship-scroll.irrigate.cc/> — added v0.15 (uses .blobignore to skip 480 MB of media)
+- <https://canada-ripple.irrigate.cc/> — added v0.15
 
 Plus an example with a custom domain attached: <https://static.darv.ai/> (same backing app as `pong`).
 
