@@ -908,3 +908,53 @@ func (c *Client) VerifyCert(ctx context.Context, hostname string) (*api.VerifyCe
 func (c *Client) RemoveCert(ctx context.Context, hostname string) error {
 	return c.do(ctx, "DELETE", "/v1/certs/"+url.PathEscape(hostname), nil, nil)
 }
+
+// --- Jobs (v0.23) ---
+
+func (c *Client) RunJob(ctx context.Context, req *api.RunJobRequest) (*api.JobRun, error) {
+	out := &api.JobRun{}
+	if err := c.do(ctx, "POST", "/v1/jobs/run", req, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) ScheduleJob(ctx context.Context, req *api.ScheduleJobRequest) (*api.JobRun, error) {
+	out := &api.JobRun{}
+	if err := c.do(ctx, "POST", "/v1/jobs/schedule", req, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) ListJobs(ctx context.Context) (*api.ListJobsResponse, error) {
+	out := &api.ListJobsResponse{}
+	if err := c.do(ctx, "GET", "/v1/jobs", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) StatusJob(ctx context.Context, id string) (*api.JobRun, error) {
+	out := &api.JobRun{}
+	if err := c.do(ctx, "GET", "/v1/jobs/"+url.PathEscape(id), nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) JobLogs(ctx context.Context, id string, fire int) (*api.JobLogsResponse, error) {
+	out := &api.JobLogsResponse{}
+	q := ""
+	if fire > 0 {
+		q = "?fire=" + fmt.Sprintf("%d", fire)
+	}
+	if err := c.do(ctx, "GET", "/v1/jobs/"+url.PathEscape(id)+"/logs"+q, nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) CancelJob(ctx context.Context, id string) error {
+	return c.do(ctx, "DELETE", "/v1/jobs/"+url.PathEscape(id), nil, nil)
+}

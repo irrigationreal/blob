@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -150,6 +151,14 @@ Usage:
   blob certs verify <hostname>                    Probe the live edge for a Let's Encrypt cert
   blob certs remove <hostname> [--yes]
 
+  blob jobs run [<app>] --image IMG -- CMD...     One-off batch job, optionally inheriting <app>'s services env
+  blob jobs schedule <name> [<app>] --cron 'EXPR' --image IMG -- CMD...
+                                                  Periodic batch job
+  blob jobs list
+  blob jobs status <id>
+  blob jobs logs <id> [--fire N]                  N=1 first fire, N=2 second; 0/omitted = most recent
+  blob jobs cancel <id> [--yes]
+
   blob autoscale list
   blob autoscale set <app> --min N --max M --metric cpu|memory|http_qps --target P
                                                   [--cooldown-up 60s] [--cooldown-down 180s]
@@ -160,7 +169,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.22.0"
+var version = "0.23.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -254,6 +263,8 @@ func main() {
 		cmdScylla(args)
 	case "certs":
 		cmdCerts(args)
+	case "jobs":
+		cmdJobs(args)
 	case "doctor":
 		cmdDoctor()
 	case "whoami":
@@ -2805,5 +2816,138 @@ func cmdCerts(args []string) {
 		fmt.Printf("removed %q\n", host)
 	default:
 		die("unknown certs subcommand: %s", args[0])
+	}
+}
+
+// splitOnDashDash returns (before, after) around the first standalone
+// "--" sentinel. Used for `blob jobs run … -- CMD ARGS …` so user
+// commands aren't tangled up with flag parsing.
+func splitOnDashDash(args []string) ([]string, []string) {
+	for i, a := range args {
+		if a == "--" {
+			return args[:i], args[i+1:]
+		}
+	}
+	return args, nil
+}
+
+func cmdJobs(args []string) {
+	if len(args) == 0 {
+		die("usage: blob jobs <run|schedule|list|status|logs|cancel> ...")
+	}
+	c := mustClient()
+	switch args[0] {
+	case "list", "ls":
+		out, err := c.ListJobs(context.Background())
+		if err != nil {
+			die("%v", err)
+		}
+		if len(out.Jobs) == 0 {
+			fmt.Println("no jobs")
+			return
+		}
+		fmt.Printf("%-30s %-10s %-25s %-15s %-12s %s\n", "NAME", "KIND", "APP", "CRON", "STATUS", "IMAGE")
+		for _, j := range out.Jobs {
+			fmt.Printf("%-30s %-10s %-25s %-15s %-12s %s\n",
+				j.Name, j.Kind, j.App, j.Cron, j.Status, j.Image)
+		}
+	case "run":
+		head, cmd := splitOnDashDash(args[1:])
+		flags := parseFlags(head)
+		image := flags["image"]
+		if image == "" {
+			die("usage: blob jobs run [<app>] --image IMG [--name N] [--cpu C] [--memory M] [--timeout S] -- CMD ARGS...")
+		}
+		req := &api.RunJobRequest{
+			App:     positional(flags, 0), // optional
+			Image:   image,
+			Name:    flags["name"],
+			Command: cmd,
+			CPU:     atoi(flags["cpu"]),
+			Memory:  atoi(flags["memory"]),
+			Timeout: atoi(flags["timeout"]),
+		}
+		fmt.Printf("running job (image=%s, app=%s)...\n", req.Image, req.App)
+		out, err := c.RunJob(context.Background(), req)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("  id:        %s\n  name:      %s\n  status:    %s\n  exit:      %d\n",
+			out.ID, out.Name, out.Status, out.ExitCode)
+		if !out.FinishedAt.IsZero() {
+			fmt.Printf("  finished:  %s\n", out.FinishedAt.Format(time.RFC3339))
+		}
+		fmt.Printf("\nFetch logs: blob jobs logs %s\n", out.ID)
+	case "schedule":
+		head, cmd := splitOnDashDash(args[1:])
+		flags := parseFlags(head)
+		name := positional(flags, 0)
+		app := positional(flags, 1)
+		image := flags["image"]
+		cron := flags["cron"]
+		if name == "" || image == "" || cron == "" {
+			die("usage: blob jobs schedule <name> [<app>] --cron 'EXPR' --image IMG -- CMD ARGS...")
+		}
+		req := &api.ScheduleJobRequest{
+			Name:    name,
+			App:     app,
+			Cron:    cron,
+			Image:   image,
+			Command: cmd,
+			CPU:     atoi(flags["cpu"]),
+			Memory:  atoi(flags["memory"]),
+		}
+		out, err := c.ScheduleJob(context.Background(), req)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("scheduled %s (cron=%s, app=%s)\n  id: %s\n  status: %s\n", out.Name, out.Cron, out.App, out.ID, out.Status)
+	case "status":
+		flags := parseFlags(args[1:])
+		id := positional(flags, 0)
+		if id == "" {
+			die("usage: blob jobs status <id>")
+		}
+		out, err := c.StatusJob(context.Background(), id)
+		if err != nil {
+			die("%v", err)
+		}
+		b, _ := json.MarshalIndent(out, "", "  ")
+		fmt.Println(string(b))
+	case "logs":
+		flags := parseFlags(args[1:])
+		id := positional(flags, 0)
+		if id == "" {
+			die("usage: blob jobs logs <id> [--fire N]")
+		}
+		fire := atoi(flags["fire"])
+		out, err := c.JobLogs(context.Background(), id, fire)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("--- stdout (fire=%d) ---\n%s", out.Fire, out.Stdout)
+		if strings.TrimSpace(out.Stderr) != "" {
+			fmt.Printf("--- stderr ---\n%s", out.Stderr)
+		}
+	case "cancel", "rm":
+		flags := parseFlags(args[1:])
+		id := positional(flags, 0)
+		if id == "" {
+			die("usage: blob jobs cancel <id>")
+		}
+		if flags["yes"] != "true" {
+			fmt.Printf("cancel job %q? (Nomad job will be stopped + purged; type the id to confirm) ", id)
+			var line string
+			fmt.Fscanln(os.Stdin, &line)
+			if line != id {
+				die("aborted")
+			}
+		}
+		if err := c.CancelJob(context.Background(), id); err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("cancelled %q\n", id)
+	default:
+		die("unknown jobs subcommand: %s", args[0])
 	}
 }

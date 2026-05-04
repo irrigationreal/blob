@@ -157,6 +157,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/v1/scylladb/", s.handleScyllaItem)
 	mux.HandleFunc("/v1/certs", s.handleCerts)
 	mux.HandleFunc("/v1/certs/", s.handleCertsItem)
+	mux.HandleFunc("/v1/jobs", s.handleJobs)
+	mux.HandleFunc("/v1/jobs/run", s.handleJobsRun)
+	mux.HandleFunc("/v1/jobs/schedule", s.handleJobsSchedule)
+	mux.HandleFunc("/v1/jobs/", s.handleJobsItem)
 	mux.HandleFunc("/v1/webhooks/setup/", s.handleWebhookSetup)
 	mux.HandleFunc("/v1/webhooks/github", s.handleWebhookGitHub)
 	mux.Handle("/metrics", promhttp.Handler())
@@ -896,6 +900,7 @@ func (s *Server) scheduleJob(ctx context.Context, req *api.DeployRequest, image 
 		Form:        req.Form,
 		Domain:      domain,
 		Image:       image,
+		Services:    req.Services,
 		UpdatedAt:   time.Now(),
 	}
 	if meta.Form == "" {
@@ -913,6 +918,7 @@ type jobMeta struct {
 	Form        string    `json:"form"`
 	Domain      string    `json:"domain"`
 	Image       string    `json:"image"`
+	Services    []string  `json:"services,omitempty"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 

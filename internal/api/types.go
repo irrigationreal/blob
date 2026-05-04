@@ -797,3 +797,60 @@ type ListCertsResponse struct {
 type VerifyCertResponse struct {
 	Binding CertBinding `json:"binding"`
 }
+
+// One-shot and scheduled batch jobs (v0.23). A job belongs optionally to
+// a parent app; when set, the job inherits the parent's resolved
+// services env (so a job bound to a web-service that uses MongoDB sees
+// the same MONGODB_URL etc).
+type RunJobRequest struct {
+	Name    string            `json:"name,omitempty"`     // optional; auto-generated if blank
+	App     string            `json:"app,omitempty"`      // parent app whose services env to inherit
+	Image   string            `json:"image"`              // docker image
+	Command []string          `json:"command,omitempty"`  // command + args (entrypoint override)
+	Env     map[string]string `json:"env,omitempty"`      // additional literal env (overlays inherited)
+	CPU     int               `json:"cpu,omitempty"`
+	Memory  int               `json:"memory,omitempty"`
+	Timeout int               `json:"timeout,omitempty"` // seconds; 0 = no timeout
+}
+
+type ScheduleJobRequest struct {
+	Name     string            `json:"name"`
+	App      string            `json:"app,omitempty"`
+	Cron     string            `json:"cron"`
+	Image    string            `json:"image"`
+	Command  []string          `json:"command,omitempty"`
+	Env      map[string]string `json:"env,omitempty"`
+	CPU      int               `json:"cpu,omitempty"`
+	Memory   int               `json:"memory,omitempty"`
+	TimeZone string            `json:"timezone,omitempty"` // default UTC
+}
+
+// JobRun describes either a one-shot job or a periodic parent. For
+// periodic parents, Cron is set; for one-shots, FireID is empty.
+// Status is the Nomad job status (pending/running/dead) for the
+// allocation referenced by FireID, or for the parent in the periodic
+// case.
+type JobRun struct {
+	ID         string    `json:"id"`         // Nomad job id (or periodic parent id)
+	Name       string    `json:"name"`
+	App        string    `json:"app,omitempty"`
+	Kind       string    `json:"kind"`       // "job" | "cronjob"
+	Cron       string    `json:"cron,omitempty"`
+	Image      string    `json:"image"`
+	Command    []string  `json:"command,omitempty"`
+	Status     string    `json:"status"`
+	CreatedAt  time.Time `json:"created_at"`
+	FinishedAt time.Time `json:"finished_at,omitempty"`
+	ExitCode   int       `json:"exit_code,omitempty"`
+}
+
+type ListJobsResponse struct {
+	Jobs []JobRun `json:"jobs"`
+}
+
+type JobLogsResponse struct {
+	Job    string `json:"job"`
+	Fire   int    `json:"fire,omitempty"`
+	Stdout string `json:"stdout"`
+	Stderr string `json:"stderr"`
+}
