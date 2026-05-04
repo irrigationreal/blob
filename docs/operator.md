@@ -59,6 +59,16 @@ After it's back:
 blob nodes undrain <id>
 ```
 
+### Check whether a workload shape fits
+
+```sh
+blob nodes list
+blob nodes recommend --memory 512 --cpu 200
+blob nodes recommend --memory 4096 --cpu 1000 --disk 1024
+```
+
+`blob nodes list` shows reserved / available / total for CPU shares, memory MiB, and disk MiB. `blob nodes recommend` runs the same resource-graph check used by placement preflight and doctor, so an oversized deploy fails before `nomad job run` with the same node-level remediation.
+
 ### Tail logs across all allocs
 
 ```sh

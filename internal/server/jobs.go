@@ -279,6 +279,9 @@ func (s *Server) runUserJob(ctx context.Context, req *api.RunJobRequest) (*api.J
 		Env:         env,
 		Command:     req.Command,
 	}
+	if err := s.preflightPlacement(ctx, dr); err != nil {
+		return nil, err
+	}
 	hcl := renderBatch(id, s.cfg.Datacenter, req.Image, dr,
 		renderEnvBlock(env, nil), "", "", "", false, "")
 	if err := os.MkdirAll(s.cfg.JobsDir, 0o755); err != nil {
@@ -349,6 +352,9 @@ func (s *Server) scheduleUserJob(ctx context.Context, req *api.ScheduleJobReques
 		Memory:      req.Memory,
 		Env:         env,
 		Command:     req.Command,
+	}
+	if err := s.preflightPlacement(ctx, dr); err != nil {
+		return nil, err
 	}
 	hcl := renderBatch(id, s.cfg.Datacenter, req.Image, dr,
 		renderEnvBlock(env, nil), "", "", "", true, req.Cron)

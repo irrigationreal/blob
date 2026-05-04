@@ -32,6 +32,7 @@ Usage:
   blob import fly <path>                          Translate fly.toml → blob.yaml
   blob login --endpoint URL [--token T]           Save endpoint and token
   blob deploy [--name N] [--port P] [--env ENV]   Deploy current folder
+       [--cpu C] [--memory M] [--replicas N]
   blob deploy --isolation kata                    Run the workload with Kata microVM isolation
   blob deploy --static [--root DIR]               Force static-site form (else auto-detected
                                                   from index.html when no blob.yaml exists)
@@ -55,6 +56,8 @@ Usage:
   blob secrets unset <name> [--env ENV]
 
   blob nodes list                                 List Nomad client nodes + reserved/available capacity
+  blob nodes recommend --memory M --cpu C [--disk D]
+                                                  Check whether the current fleet can place that shape
   blob nodes drain <id>                           Drain a node (move workloads off)
   blob nodes undrain <id>                         Stop draining
   blob nodes join                                 Print a one-liner to join a new server to the Blob
@@ -170,7 +173,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.27.0"
+var version = "0.28.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -610,6 +613,15 @@ func cmdDeploy(args []string) {
 	}
 	if v := flags["port"]; v != "" {
 		m.Port = atoi(v)
+	}
+	if v := flags["cpu"]; v != "" {
+		m.CPU = atoi(v)
+	}
+	if v := flags["memory"]; v != "" {
+		m.Memory = atoi(v)
+	}
+	if v := flags["replicas"]; v != "" {
+		m.Replicas = atoi(v)
 	}
 	if v := flags["form"]; v != "" {
 		m.Form = v
@@ -1076,10 +1088,35 @@ func cmdDomains(args []string) {
 
 func cmdNodes(args []string) {
 	if len(args) == 0 {
-		die("usage: blob nodes <list|drain|undrain|join>")
+		die("usage: blob nodes <list|recommend|drain|undrain|join>")
 	}
 	c := mustClient()
 	switch args[0] {
+	case "recommend":
+		flags := parseFlags(args[1:])
+		cpu := atoi(flags["cpu"])
+		memory := atoi(flags["memory"])
+		disk := atoi(flags["disk"])
+		if cpu <= 0 || memory <= 0 {
+			die("usage: blob nodes recommend --memory <MiB> --cpu <shares> [--disk <MiB>]")
+		}
+		out, err := c.RecommendPlacement(context.Background(), cpu, memory, disk)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("request: cpu=%d memory=%dMiB disk=%dMiB\n", out.CPU, out.MemoryMB, out.DiskMB)
+		if out.Fits {
+			fmt.Printf("fits:    %s (%s)\n", out.Node.Name, out.Node.Address)
+			fmt.Printf("detail:  %s\n", out.Detail)
+			return
+		}
+		fmt.Println("fits:    no")
+		if out.Detail != "" {
+			fmt.Printf("detail:  %s\n", out.Detail)
+		}
+		if out.Remediate != "" {
+			fmt.Printf("fix:     %s\n", out.Remediate)
+		}
 	case "list", "ls":
 		out, err := c.ListNodes(context.Background())
 		if err != nil {

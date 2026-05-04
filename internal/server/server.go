@@ -129,6 +129,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/v1/secrets/", s.handleSecretItem)
 	mux.HandleFunc("/v1/doctor", s.handleDoctor)
 	mux.HandleFunc("/v1/nodes", s.handleNodes)
+	mux.HandleFunc("/v1/nodes/recommend", s.handleNodeRecommend)
 	mux.HandleFunc("/v1/nodes/", s.handleNodeItem)
 	mux.HandleFunc("/v1/join", s.handleJoin)
 	mux.HandleFunc("/v1/volumes", s.handleVolumes)
@@ -905,6 +906,9 @@ func (s *Server) scheduleJob(ctx context.Context, req *api.DeployRequest, image 
 		return err
 	}
 	normalizeDeployRequestForRender(req)
+	if err := s.preflightPlacement(ctx, req); err != nil {
+		return err
+	}
 	req.ProjectionHash = hashJobProjection(req, image, port, domain, s.cfg.Datacenter, id)
 	hcl := renderJob(req, image, port, domain, s.cfg.Datacenter, id)
 	jobPath := filepath.Join(s.cfg.JobsDir, id+".nomad")

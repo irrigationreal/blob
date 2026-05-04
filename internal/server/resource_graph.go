@@ -13,6 +13,8 @@ import (
 	"github.com/darvell/blob/internal/api"
 )
 
+const defaultEphemeralDiskMB = 300
+
 func (s *Server) resourceGraphPath() string {
 	return filepath.Join(s.cfg.StateDir, "resource-graph.json")
 }
@@ -263,35 +265,196 @@ func firstNonEmpty(a, b string) string {
 	return b
 }
 
+func (s *Server) preflightPlacement(ctx context.Context, req *api.DeployRequest) error {
+	cpu, memory, disk := deployRequestReservation(req)
+	count := deployRequestAllocationCount(req)
+	graph, err := s.collectResourceGraph(ctx)
+	if err != nil {
+		if cached, ok := s.loadResourceGraph(); ok {
+			graph = cached
+		} else {
+			return fmt.Errorf("placement preflight: resource graph unavailable: %w", err)
+		}
+	}
+	rec := recommendPlacementForCount(cpu, memory, disk, count, graph)
+	if rec.Fits {
+		return nil
+	}
+	if rec.Remediate != "" {
+		return fmt.Errorf("placement preflight: %s; %s", rec.Detail, rec.Remediate)
+	}
+	return fmt.Errorf("placement preflight: %s", rec.Detail)
+}
+
+func deployRequestReservation(req *api.DeployRequest) (cpu, memory, disk int) {
+	cpu = req.CPU
+	memory = req.Memory
+	for _, sidecar := range req.Sidecars {
+		if sidecar.CPU > 0 {
+			cpu += sidecar.CPU
+		} else {
+			cpu += 100
+		}
+		if sidecar.Memory > 0 {
+			memory += sidecar.Memory
+		} else {
+			memory += 128
+		}
+	}
+	return cpu, memory, defaultEphemeralDiskMB
+}
+
+func deployRequestAllocationCount(req *api.DeployRequest) int {
+	if req.Replicas > 0 {
+		return req.Replicas
+	}
+	return 1
+}
+
+func recommendPlacement(cpu, memory, disk int, graph *api.ResourceGraph) api.PlacementRecommendation {
+	rec := api.PlacementRecommendation{CPU: cpu, MemoryMB: memory, DiskMB: disk}
+	if graph != nil {
+		rec.GeneratedAt = graph.GeneratedAt
+	}
+	var fit, memoryBest, cpuBest, diskBest *api.Node
+	if graph != nil {
+		for i := range graph.Nodes {
+			n := &graph.Nodes[i]
+			if !nodeAcceptsPlacement(n) {
+				continue
+			}
+			if memoryBest == nil || n.Resources.MemoryMB.Available > memoryBest.Resources.MemoryMB.Available {
+				memoryBest = n
+			}
+			if cpuBest == nil || n.Resources.CPU.Available > cpuBest.Resources.CPU.Available {
+				cpuBest = n
+			}
+			if diskBest == nil || n.Resources.DiskMB.Available > diskBest.Resources.DiskMB.Available {
+				diskBest = n
+			}
+			if n.Resources.MemoryMB.Available >= memory && n.Resources.CPU.Available >= cpu && n.Resources.DiskMB.Available >= disk {
+				if fit == nil || n.Resources.MemoryMB.Available > fit.Resources.MemoryMB.Available {
+					fit = n
+				}
+			}
+		}
+	}
+	if fit != nil {
+		rec.Fits = true
+		rec.Node = *fit
+		rec.Detail = fmt.Sprintf("fits on %s with %d MiB memory, %d CPU shares, and %d MiB disk still available after placement", fit.Name, fit.Resources.MemoryMB.Available-memory, fit.Resources.CPU.Available-cpu, fit.Resources.DiskMB.Available-disk)
+		return rec
+	}
+	if memoryBest == nil {
+		rec.Detail = "no ready eligible nodes are available"
+		rec.Remediate = "Add a ready node or run `blob nodes undrain <id>` on a drained node"
+		return rec
+	}
+	if memory > 0 && memory > memoryBest.Resources.MemoryMB.Available {
+		rec.Node = *memoryBest
+		rec.Detail = fmt.Sprintf("needs %d MiB memory; largest eligible node %s has %d MiB available (%d MiB reserved of %d MiB)", memory, memoryBest.Name, memoryBest.Resources.MemoryMB.Available, memoryBest.Resources.MemoryMB.Reserved, memoryBest.Resources.MemoryMB.Total)
+		rec.Remediate = "Lower the workload memory request or add/undrain a node with more free RAM"
+		return rec
+	}
+	if cpu > 0 && cpu > cpuBest.Resources.CPU.Available {
+		rec.Node = *cpuBest
+		rec.Detail = fmt.Sprintf("needs %d CPU shares; largest eligible node %s has %d available (%d reserved of %d)", cpu, cpuBest.Name, cpuBest.Resources.CPU.Available, cpuBest.Resources.CPU.Reserved, cpuBest.Resources.CPU.Total)
+		rec.Remediate = "Lower the workload CPU request or add/undrain capacity"
+		return rec
+	}
+	if disk > 0 && disk > diskBest.Resources.DiskMB.Available {
+		rec.Node = *diskBest
+		rec.Detail = fmt.Sprintf("needs %d MiB disk; largest eligible node %s has %d MiB available (%d MiB reserved of %d MiB)", disk, diskBest.Name, diskBest.Resources.DiskMB.Available, diskBest.Resources.DiskMB.Reserved, diskBest.Resources.DiskMB.Total)
+		rec.Remediate = "Free disk or add/undrain a node with more disk capacity"
+		return rec
+	}
+	rec.Node = *memoryBest
+	rec.Detail = fmt.Sprintf("largest eligible node %s has cpu %d/%d available and memory %d/%d MiB available; check constraints, port conflicts, image pull errors, or node runtime labels", memoryBest.Name, memoryBest.Resources.CPU.Available, memoryBest.Resources.CPU.Total, memoryBest.Resources.MemoryMB.Available, memoryBest.Resources.MemoryMB.Total)
+	rec.Remediate = "Run `nomad eval status` on the platform for the scheduler's exact constraint failure"
+	return rec
+}
+
+func recommendPlacementForCount(cpu, memory, disk, count int, graph *api.ResourceGraph) api.PlacementRecommendation {
+	if count <= 1 {
+		return recommendPlacement(cpu, memory, disk, graph)
+	}
+	rec := api.PlacementRecommendation{CPU: cpu * count, MemoryMB: memory * count, DiskMB: disk * count}
+	if graph != nil {
+		rec.GeneratedAt = graph.GeneratedAt
+	}
+
+	single := recommendPlacement(cpu, memory, disk, graph)
+	if !single.Fits {
+		return single
+	}
+
+	slots, nodesWithRoom := 0, 0
+	var best *api.Node
+	if graph != nil {
+		for i := range graph.Nodes {
+			n := &graph.Nodes[i]
+			if !nodeAcceptsPlacement(n) {
+				continue
+			}
+			nodeSlots := placementSlots(n, cpu, memory, disk)
+			if nodeSlots > 0 {
+				nodesWithRoom++
+				slots += nodeSlots
+				if best == nil || nodeSlots > placementSlots(best, cpu, memory, disk) {
+					best = n
+				}
+			}
+		}
+	}
+	if slots >= count {
+		rec.Fits = true
+		if best != nil {
+			rec.Node = *best
+		}
+		rec.Detail = fmt.Sprintf("fits %d allocations across %d eligible nodes; each allocation needs %d MiB memory, %d CPU shares, and %d MiB disk", count, nodesWithRoom, memory, cpu, disk)
+		return rec
+	}
+	if best != nil {
+		rec.Node = *best
+	}
+	rec.Detail = fmt.Sprintf("needs %d allocations of %d MiB memory, %d CPU shares, and %d MiB disk; eligible fleet currently has room for %d", count, memory, cpu, disk, slots)
+	rec.Remediate = "Lower replicas or resource requests, or add/undrain capacity"
+	return rec
+}
+
+func nodeAcceptsPlacement(n *api.Node) bool {
+	return n.Status == "ready" && n.Eligible == "eligible" && !n.Drain
+}
+
+func placementSlots(n *api.Node, cpu, memory, disk int) int {
+	const maxInt = int(^uint(0) >> 1)
+	slots := maxInt
+	if cpu > 0 {
+		slots = minInt(slots, n.Resources.CPU.Available/cpu)
+	}
+	if memory > 0 {
+		slots = minInt(slots, n.Resources.MemoryMB.Available/memory)
+	}
+	if disk > 0 {
+		slots = minInt(slots, n.Resources.DiskMB.Available/disk)
+	}
+	if slots == maxInt {
+		return 0
+	}
+	return slots
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func (s *Server) placementRemediation(ctx context.Context, jobID string, graph *api.ResourceGraph) (string, string) {
 	cpu, memory, disk := s.pendingJobReservation(ctx, jobID)
-	var best *api.Node
-	for i := range graph.Nodes {
-		n := &graph.Nodes[i]
-		if n.Status != "ready" || n.Eligible != "eligible" || n.Drain {
-			continue
-		}
-		if best == nil || n.Resources.MemoryMB.Available > best.Resources.MemoryMB.Available {
-			best = n
-		}
-	}
-	if best == nil {
-		return "no ready eligible nodes are available", "Add a ready node or run `blob nodes undrain <id>` on a drained node"
-	}
-	if memory > 0 && memory > best.Resources.MemoryMB.Available {
-		return fmt.Sprintf("needs %d MiB memory; largest eligible node %s has %d MiB available (%d MiB reserved of %d MiB)", memory, best.Name, best.Resources.MemoryMB.Available, best.Resources.MemoryMB.Reserved, best.Resources.MemoryMB.Total),
-			"Lower the workload memory request or add/undrain a node with more free RAM"
-	}
-	if cpu > 0 && cpu > best.Resources.CPU.Available {
-		return fmt.Sprintf("needs %d CPU shares; largest eligible node %s has %d available (%d reserved of %d)", cpu, best.Name, best.Resources.CPU.Available, best.Resources.CPU.Reserved, best.Resources.CPU.Total),
-			"Lower the workload CPU request or add/undrain capacity"
-	}
-	if disk > 0 && disk > best.Resources.DiskMB.Available {
-		return fmt.Sprintf("needs %d MiB disk; largest eligible node %s has %d MiB available (%d MiB reserved of %d MiB)", disk, best.Name, best.Resources.DiskMB.Available, best.Resources.DiskMB.Reserved, best.Resources.DiskMB.Total),
-			"Free disk or add/undrain a node with more disk capacity"
-	}
-	return fmt.Sprintf("largest eligible node %s has cpu %d/%d available and memory %d/%d MiB available; check constraints, port conflicts, image pull errors, or node runtime labels", best.Name, best.Resources.CPU.Available, best.Resources.CPU.Total, best.Resources.MemoryMB.Available, best.Resources.MemoryMB.Total),
-		"Run `nomad eval status` on the platform for the scheduler's exact constraint failure"
+	rec := recommendPlacement(cpu, memory, disk, graph)
+	return rec.Detail, rec.Remediate
 }
 
 func (s *Server) pendingJobReservation(ctx context.Context, jobID string) (cpu, memory, disk int) {

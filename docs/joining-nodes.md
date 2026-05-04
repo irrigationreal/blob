@@ -71,13 +71,21 @@ Back on your laptop:
 blob nodes list
 ```
 
-The new node appears within a few seconds with `STATUS=ready` and `ELIGIBLE=eligible`. Workloads deployed from now on are eligible to land on either host.
+The new node appears within a few seconds with `STATUS=ready` and `ELIGIBLE=eligible`. The table also shows CPU, memory, and disk as reserved / available / total, which is the resource graph Blob uses for placement preflight. Workloads deployed from now on are eligible to land on either host.
 
 ```
-ID           NAME                 ADDR            STATUS     ELIGIBLE   DC
-639cb577     platform             65.21.9.22      ready      eligible   pve
-4d1a8c33     scout-01             10.0.5.42       ready      eligible   pve
+ID         NAME       ADDR         STATUS   ELIGIBLE   DC   CPU R/A/T        MEM R/A/T             DISK R/A/T             ALLOC
+639cb577   platform   65.21.9.22   ready    eligible   pve  18450/13550/32000 22368/1674/24042MiB  12600/491152/503752MiB 42
+4d1a8c33   scout-01   10.0.5.42    ready    eligible   pve  300/7700/8000     512/14872/15384MiB   300/232700/233000MiB  1
 ```
+
+Before sending a large workload, ask the graph where it fits:
+
+```sh
+blob nodes recommend --memory 2048 --cpu 500
+```
+
+If it cannot fit, the deploy path refuses before `nomad job run` and prints the same remediation as `blob doctor`.
 
 ## What still needs to be on each node
 

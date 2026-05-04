@@ -84,7 +84,7 @@ The same platform host runs these via `blob import compose|procfile|fly` → `bl
 | **Open** in browser (`blob open`)                              | shipped  |
 | **Volumes**: per-app Docker named volumes                      | shipped  |
 | **Nodes**: list, drain, undrain, generate join script          | shipped  |
-| **Resource graph**: persisted Nomad node + allocation capacity model; nodes list shows CPU/memory/disk reserved/available/total | shipped |
+| **Resource graph + placement preflight**: persisted Nomad node/allocation capacity, `blob nodes recommend`, and impossible deploy refusal before Nomad scheduling | shipped |
 | **Doctor** drift / orphan / liveness checks                    | shipped  |
 | **Manifest projection hashes**: deploy records intended job projection and `blob doctor` detects live/on-disk drift | shipped |
 | **Bootstrap script** for turning a fresh server into a Blob    | shipped  |
@@ -205,7 +205,7 @@ Each component becomes its own Nomad job named `<app>-<component>` (e.g. `my-app
 ```
 blob init [--name N] [--port P] [--domain D] [--form F] [--root D]
 blob login --endpoint URL [--token T]
-blob deploy [--name N] [--port P] [--domain D] [--image IMG] [--env ENV]
+blob deploy [--name N] [--port P] [--domain D] [--image IMG] [--env ENV] [--cpu C] [--memory M] [--replicas N]
 blob list
 blob status <app>
 blob logs <app> [-n 200]

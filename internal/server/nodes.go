@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,6 +57,34 @@ func (s *Server) handleNodeItem(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeErr(w, 404, "not found")
 	}
+}
+
+func (s *Server) handleNodeRecommend(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		writeErr(w, 405, "method not allowed")
+		return
+	}
+	cpu, _ := strconv.Atoi(r.URL.Query().Get("cpu"))
+	memory, _ := strconv.Atoi(r.URL.Query().Get("memory"))
+	disk, _ := strconv.Atoi(r.URL.Query().Get("disk"))
+	if cpu <= 0 || memory <= 0 {
+		writeErr(w, 400, "cpu and memory are required")
+		return
+	}
+	if disk <= 0 {
+		disk = defaultEphemeralDiskMB
+	}
+	graph, err := s.collectResourceGraph(r.Context())
+	if err != nil {
+		if cached, ok := s.loadResourceGraph(); ok {
+			graph = cached
+		} else {
+			writeErr(w, 500, "resource graph unavailable: "+err.Error())
+			return
+		}
+	}
+	out := recommendPlacement(cpu, memory, disk, graph)
+	writeJSON(w, 200, out)
 }
 
 func (s *Server) listNodes(ctx context.Context) (*api.ListNodesResponse, error) {

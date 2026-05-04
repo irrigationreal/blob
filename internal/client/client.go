@@ -210,6 +210,20 @@ func (c *Client) ListNodes(ctx context.Context) (*api.ListNodesResponse, error) 
 	return out, nil
 }
 
+func (c *Client) RecommendPlacement(ctx context.Context, cpu, memory, disk int) (*api.PlacementRecommendation, error) {
+	q := url.Values{}
+	q.Set("cpu", fmt.Sprint(cpu))
+	q.Set("memory", fmt.Sprint(memory))
+	if disk > 0 {
+		q.Set("disk", fmt.Sprint(disk))
+	}
+	out := &api.PlacementRecommendation{}
+	if err := c.do(ctx, "GET", "/v1/nodes/recommend?"+q.Encode(), nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *Client) DrainNode(ctx context.Context, id string, on bool) error {
 	if on {
 		return c.do(ctx, "POST", "/v1/nodes/"+url.PathEscape(id)+"/drain", nil, nil)

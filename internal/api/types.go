@@ -225,6 +225,17 @@ type ResourceGraph struct {
 	Nodes       []Node    `json:"nodes"`
 }
 
+type PlacementRecommendation struct {
+	Fits        bool      `json:"fits"`
+	Node        Node      `json:"node,omitempty"`
+	CPU         int       `json:"cpu"`
+	MemoryMB    int       `json:"memory_mb"`
+	DiskMB      int       `json:"disk_mb"`
+	Detail      string    `json:"detail,omitempty"`
+	Remediate   string    `json:"remediate,omitempty"`
+	GeneratedAt time.Time `json:"generated_at,omitempty"`
+}
+
 type ListNodesResponse struct {
 	GeneratedAt time.Time `json:"generated_at,omitempty"`
 	Nodes       []Node    `json:"nodes"`
