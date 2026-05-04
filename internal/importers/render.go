@@ -313,6 +313,8 @@ func renderImage(image any) string {
 	return ""
 }
 
+const nodeInstallCommand = "if [ -f pnpm-lock.yaml ]; then corepack enable pnpm && pnpm install --no-frozen-lockfile; elif [ -f yarn.lock ]; then yarn install; elif [ -f bun.lock ] || [ -f bun.lockb ]; then npm i -g bun && bun install; elif [ -f package.json ]; then npm install; fi"
+
 func renderServiceDockerfile(runtime, rootDir, buildCommand, startCommand string, port int) string {
 	runtime = strings.ToLower(strings.TrimSpace(runtime))
 	workdir := "/app"
@@ -334,14 +336,14 @@ func renderServiceDockerfile(runtime, rootDir, buildCommand, startCommand string
 		return fmt.Sprintf(`FROM node:20-alpine
 WORKDIR /app
 COPY package.json package-lock.json* pnpm-lock.yaml* yarn.lock* bun.lock* bun.lockb* ./
-RUN if [ -f pnpm-lock.yaml ]; then corepack enable pnpm && pnpm install --no-frozen-lockfile; elif [ -f yarn.lock ]; then yarn install; elif [ -f bun.lock ] || [ -f bun.lockb ]; then npm i -g bun && bun install; elif [ -f package.json ]; then npm install; fi
+RUN %s
 COPY . .
 WORKDIR %s
 %sENV NODE_ENV=production
 ENV PORT=%d
 EXPOSE %d
 CMD ["sh", "-lc", %q]
-`, workdir, build, port, port, startCommand)
+`, nodeInstallCommand, workdir, build, port, port, startCommand)
 	case "python", "python3":
 		return fmt.Sprintf(`FROM python:3.12-slim
 WORKDIR /app

@@ -86,6 +86,7 @@ The same platform host runs these via `blob import compose|procfile|fly` → `bl
 | **Nodes**: list, drain, undrain, generate join script          | shipped  |
 | **Resource graph + placement preflight**: persisted Nomad node/allocation capacity, `blob nodes recommend`, and impossible deploy refusal before Nomad scheduling | shipped |
 | **Status pages**: `blob status-pages enable <app>` publishes public HTML + JSON without alloc IDs or secrets | shipped |
+| **Uptime monitors**: persisted HTTP checks with optional alert webhooks and status-page integration | shipped |
 | **Audit log**: append-only hash-chained events for authenticated mutating API actions | shipped |
 | **Identity/RBAC**: scoped service tokens with per-token grants | shipped |
 | **Cost rollups**: `blob costs summary/apps/nodes` reports reserved resources and optional monthly estimates | shipped |
@@ -122,6 +123,7 @@ Three short docs:
 - **[`docs/web-console.md`](docs/web-console.md)** — server-rendered authenticated operator UI at `/ui`.
 - **[`docs/managed-services.md`](docs/managed-services.md)** — managed Postgres: create, bind apps via `services:`, get the DSN, destroy.
 - **[`docs/status-pages.md`](docs/status-pages.md)** — public app status pages with HTML + JSON output.
+- **[`docs/monitors.md`](docs/monitors.md)** — persisted HTTP checks and alert webhooks.
 
 ## blob.yaml
 
@@ -264,6 +266,11 @@ blob status-pages enable <app>
 blob status-pages list
 blob status-pages show <app>
 blob status-pages disable <app> [--yes]
+
+blob monitors add <app> [--path P] [--interval S] [--webhook URL]
+blob monitors list
+blob monitors show <name>
+blob monitors remove <name> [--yes]
 
 blob secrets list [--env ENV]
 blob secrets set <name> [--env ENV] [--from FILE | --value V]

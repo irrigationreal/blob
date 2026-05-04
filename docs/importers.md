@@ -25,7 +25,7 @@ Accepts a Worker directory containing `wrangler.toml`, `wrangler.json`, or `wran
 | `[build] command` | prepended to the generated bundling build |
 | default Worker export / `fetch` handler | `form: function` through a generated adapter |
 
-The importer writes `.blob-worker-adapter.mjs` next to `blob.yaml` and sets `handler: .blob-worker-adapter.mjs`. The generated `build:` command runs `esbuild` inside `node:22-alpine`, bundles the configured Worker entrypoint to `.blob-worker-worker.mjs`, and removes temporary `node_modules` before the final function image build. TypeScript entrypoints work without requiring Node or npm on the Blob host.
+The importer writes `.blob-worker-adapter.mjs` next to `blob.yaml`, sets `root: .blob-worker-root`, and sets `handler: .blob-worker-adapter.mjs`. The generated `build:` command runs `esbuild` inside `node:22-alpine`, bundles the configured Worker entrypoint to `.blob-worker-root/.blob-worker-worker.mjs`, and copies only the adapter plus bundle into the final function image. TypeScript entrypoints work without requiring Node or npm on the Blob host.
 
 Dropped with warnings: compatibility dates/flags, Workers routes, `workers_dev`, cron triggers, Pages assets, KV, D1, R2, Durable Objects, queues, service bindings, and analytics bindings. Recreate those as Blob custom domains, jobs, static sites, managed services, env, or secrets.
 

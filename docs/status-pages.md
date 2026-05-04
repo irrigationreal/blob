@@ -7,8 +7,9 @@ The public payload contains:
 - app name, form, public URL, Nomad job status, and running replica count
 - route probe result for the app URL, including HTTP status code and latency
 - current relevant doctor issues for the app, plus cluster-wide P1/P2 issues
+- uptime monitors attached to the app via `blob monitors add <app>`
 
-It does not expose secret values or Nomad allocation IDs. Doctor text is sanitized before it is rendered publicly.
+It does not expose secret values, monitor webhook URLs, or Nomad allocation IDs. Doctor text is sanitized before it is rendered publicly.
 
 ## Enable a status page
 
@@ -64,11 +65,18 @@ The HTML endpoint is meant for humans. The JSON endpoint is stable enough for mo
     "status_code": 200,
     "latency_ms": 42
   },
+  "monitors": [
+    {
+      "name": "my-app",
+      "url": "https://my-app.example.com/healthz",
+      "health": {"status": "reachable", "ok": true, "status_code": 200}
+    }
+  ],
   "doctor_issues": []
 }
 ```
 
-`overall` is `operational`, `degraded`, or `down`. A dead or missing app is `down`. A running app with a failing route probe or relevant P2 issue is `degraded`.
+`overall` is `operational`, `degraded`, or `down`. A dead or missing app is `down`. A running app with a failing attached monitor is also `down`. A running app with a failing route probe or relevant P2 issue is `degraded`.
 
 ## Disable a status page
 

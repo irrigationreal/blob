@@ -231,6 +231,34 @@ func (c *Client) DisableStatusPage(ctx context.Context, app string) error {
 	return c.do(ctx, "DELETE", "/v1/status-pages/"+url.PathEscape(app), nil, nil)
 }
 
+func (c *Client) ListMonitors(ctx context.Context) (*api.ListMonitorsResponse, error) {
+	out := &api.ListMonitorsResponse{}
+	if err := c.do(ctx, "GET", "/v1/monitors", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) AddMonitor(ctx context.Context, req *api.AddMonitorRequest) (*api.MonitorResponse, error) {
+	out := &api.MonitorResponse{}
+	if err := c.do(ctx, "POST", "/v1/monitors", req, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) ShowMonitor(ctx context.Context, name string) (*api.MonitorResponse, error) {
+	out := &api.MonitorResponse{}
+	if err := c.do(ctx, "GET", "/v1/monitors/"+url.PathEscape(name), nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) RemoveMonitor(ctx context.Context, name string) error {
+	return c.do(ctx, "DELETE", "/v1/monitors/"+url.PathEscape(name), nil, nil)
+}
+
 func (c *Client) ListAudit(ctx context.Context, limit int) (*api.ListAuditResponse, error) {
 	q := ""
 	if limit > 0 {

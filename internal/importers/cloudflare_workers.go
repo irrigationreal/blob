@@ -12,7 +12,13 @@ import (
 	"github.com/darvell/blob/internal/manifest"
 )
 
-const cloudflareWorkerAdapter = `import worker from "./.blob-worker-worker.mjs";
+const (
+	cloudflareWorkerRoot        = ".blob-worker-root"
+	cloudflareWorkerAdapterFile = ".blob-worker-adapter.mjs"
+	cloudflareWorkerBundleFile  = ".blob-worker-worker.mjs"
+)
+
+const cloudflareWorkerAdapter = `import worker from "./` + cloudflareWorkerBundleFile + `";
 
 function requestURL(event) {
   const query = new URLSearchParams(event.query || {}).toString();
@@ -66,12 +72,13 @@ func CloudflareWorkers(path string) (*Result, error) {
 	if name == "" {
 		name = "worker"
 	}
-	env := cloudflareWorkerVars(cfg.Vars)
+	env := mergeEnv(cfg.Vars)
 	c := manifest.Component{
 		Name:    name,
 		Form:    "function",
+		Root:    cloudflareWorkerRoot,
 		Runtime: "nodejs",
-		Handler: ".blob-worker-adapter.mjs",
+		Handler: cloudflareWorkerAdapterFile,
 		Build:   cloudflareWorkerBuildCommand(main, cfg.Build.Command),
 		Env:     env,
 	}
@@ -81,7 +88,7 @@ func CloudflareWorkers(path string) (*Result, error) {
 	res := &Result{
 		Source:     "cloudflare-workers",
 		Manifest:   &manifest.Manifest{Component: c},
-		ExtraFiles: map[string][]byte{".blob-worker-adapter.mjs": []byte(cloudflareWorkerAdapter)},
+		ExtraFiles: map[string][]byte{cloudflareWorkerAdapterFile: []byte(cloudflareWorkerAdapter)},
 	}
 	res.Warnings = append(res.Warnings, cloudflareWorkerWarnings(cfg, cfgPath)...)
 	if err := res.Render(); err != nil {
@@ -96,6 +103,7 @@ type cloudflareWorkersConfig struct {
 	CompatibilityDate  string           `toml:"compatibility_date" json:"compatibility_date"`
 	CompatibilityFlags []string         `toml:"compatibility_flags" json:"compatibility_flags"`
 	Vars               map[string]any   `toml:"vars" json:"vars"`
+	Env                map[string]any   `toml:"env" json:"env"`
 	Route              any              `toml:"route" json:"route"`
 	Routes             []map[string]any `toml:"routes" json:"routes"`
 	WorkersDev         any              `toml:"workers_dev" json:"workers_dev"`
@@ -167,7 +175,7 @@ func parseCloudflareWorkersConfig(path string, cfg *cloudflareWorkersConfig) err
 			return fmt.Errorf("parse wrangler.json: %w", err)
 		}
 	case ".jsonc":
-		if err := json.Unmarshal(stripJSONComments(b), cfg); err != nil {
+		if err := json.Unmarshal(stripJSONC(b), cfg); err != nil {
 			return fmt.Errorf("parse wrangler.jsonc: %w", err)
 		}
 	default:
@@ -203,26 +211,27 @@ func cleanCloudflareWorkerPath(path string) (string, error) {
 }
 
 func cloudflareWorkerBuildCommand(main, prebuild string) string {
-	install := "if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then npm ci; elif [ -f package.json ]; then npm install; fi"
-	bundle := "npx --yes esbuild " + shellQuote(main) + " --bundle --format=esm --platform=browser --target=es2022 --outfile=.blob-worker-worker.mjs"
-	parts := []string{install}
-	if strings.TrimSpace(prebuild) != "" {
-		parts = append(parts, strings.TrimSpace(prebuild))
+	bundle := "npx --yes esbuild " + shellQuote(main) + " --bundle --format=esm --platform=browser --target=es2022 --outfile=/out/" + cloudflareWorkerBundleFile
+	adapterCopy := "cp /src/" + cloudflareWorkerAdapterFile + " /out/" + cloudflareWorkerAdapterFile
+	parts := []string{
+		"mkdir -p /tmp/work",
+		"cp -a /src/. /tmp/work/",
+		"cd /tmp/work",
+		nodeInstallCommand,
 	}
-	parts = append(parts, bundle, "rm -rf node_modules")
-	inner := strings.Join(parts, " && ")
-	return "docker run --rm -v \"$PWD:/work\" -w /work node:22-alpine sh -lc " + shellQuote(inner)
-}
-
-func cloudflareWorkerVars(vars map[string]any) map[string]string {
-	if len(vars) == 0 {
-		return nil
+	prebuild = strings.TrimSpace(prebuild)
+	if prebuild != "" {
+		parts = append(parts, prebuild)
 	}
-	env := map[string]string{}
-	for k, v := range vars {
-		env[k] = fmt.Sprint(v)
+	parts = append(parts, bundle)
+	workdirBuild := strings.Join(parts, " && ")
+	inner := workdirBuild
+	if prebuild == "" {
+		needsInstall := "[ -f /src/package.json ] || [ -f /src/pnpm-lock.yaml ] || [ -f /src/yarn.lock ] || [ -f /src/bun.lock ] || [ -f /src/bun.lockb ]"
+		inner = "if " + needsInstall + "; then " + workdirBuild + "; else cd /src && " + bundle + "; fi"
 	}
-	return env
+	inner += " && " + adapterCopy
+	return "rm -rf " + cloudflareWorkerRoot + " && mkdir -p " + cloudflareWorkerRoot + " && docker run --rm -v \"$PWD:/src:ro\" -v \"$PWD/" + cloudflareWorkerRoot + ":/out\" node:22-alpine sh -lc " + shellQuote(inner)
 }
 
 func cloudflareWorkerWarnings(cfg cloudflareWorkersConfig, cfgPath string) []string {
@@ -232,6 +241,9 @@ func cloudflareWorkerWarnings(cfg cloudflareWorkersConfig, cfgPath string) []str
 	}
 	if cfg.CompatibilityDate != "" || len(cfg.CompatibilityFlags) > 0 {
 		warnings = append(warnings, "compatibility_date / compatibility_flags are not emulated; verify runtime behavior under Blob's Node function adapter")
+	}
+	if len(cfg.Env) > 0 {
+		warnings = append(warnings, fmt.Sprintf("%d Wrangler env blocks dropped - import one environment at a time by copying its vars/bindings to the top level before import", len(cfg.Env)))
 	}
 	if cfg.Route != nil || len(cfg.Routes) > 0 || cfg.WorkersDev != nil {
 		warnings = append(warnings, "Cloudflare routes/workers_dev dropped - Blob publishes the function at its app hostname; attach custom domains separately if needed")
@@ -255,6 +267,10 @@ func cloudflareWorkerWarnings(cfg cloudflareWorkersConfig, cfgPath string) []str
 		warnings = append(warnings, fmt.Sprintf("%d Cloudflare bindings dropped - recreate with Blob managed services, env, or secrets", bindings))
 	}
 	return warnings
+}
+
+func stripJSONC(in []byte) []byte {
+	return stripJSONTrailingCommas(stripJSONComments(in))
 }
 
 func stripJSONComments(in []byte) []byte {
@@ -300,6 +316,44 @@ func stripJSONComments(in []byte) []byte {
 					i++
 				}
 				i++
+				continue
+			}
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+func stripJSONTrailingCommas(in []byte) []byte {
+	out := make([]byte, 0, len(in))
+	inString := false
+	escaped := false
+	for i := 0; i < len(in); i++ {
+		c := in[i]
+		if inString {
+			out = append(out, c)
+			if escaped {
+				escaped = false
+				continue
+			}
+			if c == '\\' {
+				escaped = true
+			} else if c == '"' {
+				inString = false
+			}
+			continue
+		}
+		if c == '"' {
+			inString = true
+			out = append(out, c)
+			continue
+		}
+		if c == ',' {
+			j := i + 1
+			for j < len(in) && (in[j] == ' ' || in[j] == '\t' || in[j] == '\r' || in[j] == '\n') {
+				j++
+			}
+			if j < len(in) && (in[j] == '}' || in[j] == ']') {
 				continue
 			}
 		}

@@ -103,6 +103,10 @@ compatibility_date = "2024-01-01"
 
 [vars]
 GREETING = "hello"
+FEATURE = { enabled = true, limit = 3 }
+
+[env.preview.vars]
+ONLY_PREVIEW = "yes"
 
 [[kv_namespaces]]
 binding = "CACHE"
@@ -114,20 +118,23 @@ id = "abc123"
 		t.Fatal(err)
 	}
 	m := res.Manifest
-	if res.Source != "cloudflare-workers" || m.Name != "edge-api" || m.Form != "function" || m.Runtime != "nodejs" || m.Handler != ".blob-worker-adapter.mjs" {
+	if res.Source != "cloudflare-workers" || m.Name != "edge-api" || m.Form != "function" || m.Root != ".blob-worker-root" || m.Runtime != "nodejs" || m.Handler != ".blob-worker-adapter.mjs" {
 		t.Fatalf("manifest = %+v", m.Component)
 	}
 	if got := m.Env["GREETING"]; got != "hello" {
 		t.Fatalf("GREETING = %q", got)
 	}
-	if !strings.Contains(m.Build, "docker run") || !strings.Contains(m.Build, "esbuild") || !strings.Contains(m.Build, "src/index.ts") {
+	if got := m.Env["FEATURE"]; got != `{"enabled":true,"limit":3}` {
+		t.Fatalf("FEATURE = %q", got)
+	}
+	if !strings.Contains(m.Build, "docker run") || !strings.Contains(m.Build, "esbuild") || !strings.Contains(m.Build, "src/index.ts") || !strings.Contains(m.Build, ".blob-worker-root") || strings.Contains(m.Build, "rm -rf node_modules") {
 		t.Fatalf("unexpected build command: %s", m.Build)
 	}
 	if !strings.Contains(string(res.ExtraFiles[".blob-worker-adapter.mjs"]), "worker.fetch") {
 		t.Fatalf("adapter missing fetch bridge:\n%s", res.ExtraFiles[".blob-worker-adapter.mjs"])
 	}
 	warnings := strings.Join(res.Warnings, "\n")
-	for _, want := range []string{"compatibility_date", "Cloudflare bindings dropped"} {
+	for _, want := range []string{"compatibility_date", "Wrangler env blocks dropped", "Cloudflare bindings dropped"} {
 		if !strings.Contains(warnings, want) {
 			t.Fatalf("warnings missing %q: %#v", want, res.Warnings)
 		}
@@ -140,8 +147,8 @@ func TestCloudflareWorkersJSONCImporter(t *testing.T) {
   // jsonc comments are accepted by Wrangler
   "name": "json-worker",
   "main": "worker.js",
-  "vars": {"COUNT": 3},
-  "triggers": {"crons": ["*/5 * * * *"]}
+  "vars": {"COUNT": 3,},
+  "triggers": {"crons": ["*/5 * * * *",],},
 }`)
 	writeTestFile(t, filepath.Join(dir, "worker.js"), `export default { async fetch() { return new Response("ok") } }`)
 	res, err := CloudflareWorkers(dir)

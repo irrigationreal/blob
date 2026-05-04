@@ -73,6 +73,7 @@ type Server struct {
 	scheduler  *Scheduler
 	autoscaler *autoscaler
 	jobLogs    *jobLogCollector
+	monitors   *monitorRunner
 	auditMu    sync.Mutex
 	mu         sync.Mutex
 }
@@ -89,6 +90,8 @@ func New(cfg Config) (*Server, error) {
 	s.autoscaler.Start()
 	s.jobLogs = newJobLogCollector(s)
 	s.jobLogs.Start()
+	s.monitors = newMonitorRunner(s)
+	s.monitors.Start()
 	s.initTracing()
 	return s, nil
 }
@@ -103,6 +106,9 @@ func (s *Server) Close() {
 	}
 	if s.jobLogs != nil {
 		s.jobLogs.Stop()
+	}
+	if s.monitors != nil {
+		s.monitors.Stop()
 	}
 }
 
@@ -140,6 +146,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/v1/status-pages", s.handleStatusPages)
 	mux.HandleFunc("/v1/status-pages/", s.handleStatusPagesItem)
 	mux.HandleFunc("/status/", s.handlePublicStatusPage)
+	mux.HandleFunc("/v1/monitors", s.handleMonitors)
+	mux.HandleFunc("/v1/monitors/", s.handleMonitorItem)
 	mux.HandleFunc("/v1/plugins", s.handlePlugins)
 	mux.HandleFunc("/v1/plugins/", s.handlePluginItem)
 	mux.HandleFunc("/v1/costs", s.handleCosts)

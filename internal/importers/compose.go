@@ -1,6 +1,7 @@
 package importers
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -181,27 +182,27 @@ func Compose(path string) (*Result, error) {
 // --- compose schema (minimal, partial) ---
 
 type composeFile struct {
-	Version  string                       `yaml:"version,omitempty"`
-	Name     string                       `yaml:"name,omitempty"`
-	Services map[string]composeService    `yaml:"services"`
-	Volumes  map[string]any               `yaml:"volumes,omitempty"`
-	Networks map[string]any               `yaml:"networks,omitempty"`
-	Configs  map[string]any               `yaml:"configs,omitempty"`
-	Secrets  map[string]any               `yaml:"secrets,omitempty"`
+	Version  string                    `yaml:"version,omitempty"`
+	Name     string                    `yaml:"name,omitempty"`
+	Services map[string]composeService `yaml:"services"`
+	Volumes  map[string]any            `yaml:"volumes,omitempty"`
+	Networks map[string]any            `yaml:"networks,omitempty"`
+	Configs  map[string]any            `yaml:"configs,omitempty"`
+	Secrets  map[string]any            `yaml:"secrets,omitempty"`
 }
 
 type composeService struct {
-	Image       string         `yaml:"image,omitempty"`
-	Build       any            `yaml:"build,omitempty"`
-	Ports       []any          `yaml:"ports,omitempty"`
-	Expose      []any          `yaml:"expose,omitempty"`
-	Environment any            `yaml:"environment,omitempty"`
-	Volumes     []string       `yaml:"volumes,omitempty"`
-	Command     any            `yaml:"command,omitempty"`
-	Entrypoint  any            `yaml:"entrypoint,omitempty"`
-	DependsOn   any            `yaml:"depends_on,omitempty"`
-	Healthcheck any            `yaml:"healthcheck,omitempty"`
-	Networks    any            `yaml:"networks,omitempty"`
+	Image       string   `yaml:"image,omitempty"`
+	Build       any      `yaml:"build,omitempty"`
+	Ports       []any    `yaml:"ports,omitempty"`
+	Expose      []any    `yaml:"expose,omitempty"`
+	Environment any      `yaml:"environment,omitempty"`
+	Volumes     []string `yaml:"volumes,omitempty"`
+	Command     any      `yaml:"command,omitempty"`
+	Entrypoint  any      `yaml:"entrypoint,omitempty"`
+	DependsOn   any      `yaml:"depends_on,omitempty"`
+	Healthcheck any      `yaml:"healthcheck,omitempty"`
+	Networks    any      `yaml:"networks,omitempty"`
 	Deploy      struct {
 		Resources struct {
 			Limits struct {
@@ -255,7 +256,7 @@ func mergeEnv(env any) map[string]string {
 	switch v := env.(type) {
 	case map[string]any:
 		for k, val := range v {
-			out[k] = fmt.Sprint(val)
+			out[k] = envValueString(val)
 		}
 	case []any:
 		for _, item := range v {
@@ -266,6 +267,16 @@ func mergeEnv(env any) map[string]string {
 		}
 	}
 	return out
+}
+
+func envValueString(v any) string {
+	switch v.(type) {
+	case map[string]any, []any, []string, []map[string]any:
+		if b, err := json.Marshal(v); err == nil {
+			return string(b)
+		}
+	}
+	return fmt.Sprint(v)
 }
 
 func flattenCmd(cmd any) []string {

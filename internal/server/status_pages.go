@@ -234,8 +234,11 @@ func (s *Server) publicStatusPage(ctx context.Context, app string) (*api.PublicS
 		out.AppStatus = api.PublicAppStatus{App: app, Status: "missing"}
 		out.RouteHealth = api.RouteHealth{Status: "skipped", Error: "app is missing"}
 	}
+	if monitors, err := s.listMonitors(); err == nil {
+		out.Monitors = publicMonitorStatuses(monitors.Monitors, app)
+	}
 	out.DoctorIssues = s.publicDoctorIssues(ctx, app)
-	out.Overall = overallStatus(out.AppStatus, out.RouteHealth, out.DoctorIssues)
+	out.Overall = overallStatus(out.AppStatus, out.RouteHealth, out.DoctorIssues, out.Monitors)
 	return out, nil
 }
 
@@ -251,19 +254,28 @@ func publicAppStatus(st *api.StatusResponse) api.PublicAppStatus {
 	}
 }
 
+type probeStatusClassifier func(statusCode int, statusLine string) (ok bool, status string, errText string)
+
 func probeRoute(ctx context.Context, rawURL string) api.RouteHealth {
-	out := api.RouteHealth{URL: rawURL, CheckedAt: time.Now().UTC()}
 	if rawURL == "" {
-		out.Status = "skipped"
-		out.Error = "app has no public route"
-		return out
+		return api.RouteHealth{URL: rawURL, CheckedAt: time.Now().UTC(), Status: "skipped", Error: "app has no public route"}
 	}
-	if err := validateStatusProbeURL(rawURL); err != nil {
+	return probeHTTPURL(ctx, rawURL, "blob-status-page/1", 5*time.Second, validateStatusProbeURL, func(statusCode int, statusLine string) (bool, string, string) {
+		if statusCode < 500 {
+			return true, "reachable", ""
+		}
+		return false, "failing", statusLine
+	})
+}
+
+func probeHTTPURL(ctx context.Context, rawURL, userAgent string, timeout time.Duration, validate func(string) error, classify probeStatusClassifier) api.RouteHealth {
+	out := api.RouteHealth{URL: rawURL, CheckedAt: time.Now().UTC()}
+	if err := validate(rawURL); err != nil {
 		out.Status = "skipped"
 		out.Error = err.Error()
 		return out
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(probeCtx, "GET", rawURL, nil)
 	if err != nil {
@@ -271,7 +283,7 @@ func probeRoute(ctx context.Context, rawURL string) api.RouteHealth {
 		out.Error = sanitizePublicText(err.Error())
 		return out
 	}
-	req.Header.Set("User-Agent", "blob-status-page/1")
+	req.Header.Set("User-Agent", userAgent)
 	start := time.Now()
 	resp, err := http.DefaultClient.Do(req)
 	out.LatencyMS = time.Since(start).Milliseconds()
@@ -283,33 +295,31 @@ func probeRoute(ctx context.Context, rawURL string) api.RouteHealth {
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
 	out.StatusCode = resp.StatusCode
-	if resp.StatusCode < 500 {
-		out.OK = true
-		out.Status = "reachable"
-	} else {
-		out.Status = "failing"
-		out.Error = resp.Status
-	}
+	out.OK, out.Status, out.Error = classify(resp.StatusCode, resp.Status)
 	return out
 }
 
 func validateStatusProbeURL(rawURL string) error {
+	return validatePublicHTTPURL(rawURL, "app route", "route probe")
+}
+
+func validatePublicHTTPURL(rawURL, thing, skipSubject string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return fmt.Errorf("invalid app route url")
+		return fmt.Errorf("invalid %s", thing)
 	}
 	if u.Scheme != "https" && u.Scheme != "http" {
-		return fmt.Errorf("app route is not http or https")
+		return fmt.Errorf("%s is not http or https", thing)
 	}
 	host := u.Hostname()
 	if host == "" {
-		return fmt.Errorf("app route has no hostname")
+		return fmt.Errorf("%s has no hostname", thing)
 	}
 	if strings.EqualFold(host, "localhost") || strings.HasSuffix(strings.ToLower(host), ".local") {
-		return fmt.Errorf("route probe skipped for local hostname")
+		return fmt.Errorf("%s skipped for local hostname", skipSubject)
 	}
 	if ip := net.ParseIP(host); ip != nil {
-		return fmt.Errorf("route probe skipped for literal IP hostname")
+		return fmt.Errorf("%s skipped for literal IP hostname", skipSubject)
 	}
 	return nil
 }
@@ -341,12 +351,17 @@ func sanitizePublicText(s string) string {
 	return uuidLikeRE.ReplaceAllString(s, "<redacted-id>")
 }
 
-func overallStatus(app api.PublicAppStatus, route api.RouteHealth, issues []api.PublicDoctorIssue) string {
+func overallStatus(app api.PublicAppStatus, route api.RouteHealth, issues []api.PublicDoctorIssue, monitors []api.PublicMonitorStatus) string {
 	if app.Status == "dead" || app.Status == "missing" {
 		return "down"
 	}
 	for _, issue := range issues {
 		if issue.Severity == "P1" {
+			return "down"
+		}
+	}
+	for _, mon := range monitors {
+		if monitorHealthState(mon.Health) == "down" {
 			return "down"
 		}
 	}
@@ -377,6 +392,23 @@ func renderStatusPageHTML(p *api.PublicStatusPage) string {
 	fmt.Fprintf(&b, "<style>body{font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,sans-serif;margin:0;background:#f6f7f9;color:#111827}.wrap{max-width:760px;margin:48px auto;padding:0 20px}.card{background:white;border:1px solid #e5e7eb;border-radius:18px;padding:24px;box-shadow:0 8px 30px rgba(15,23,42,.06)}.pill{display:inline-block;border-radius:999px;padding:6px 12px;color:white;background:%s;font-weight:700}.muted{color:#667085}.grid{display:grid;grid-template-columns:160px 1fr;gap:10px;margin-top:22px}.issues{margin-top:24px}.issue{border-top:1px solid #e5e7eb;padding:12px 0}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}</style></head><body><main class=\"wrap\"><section class=\"card\">", statusColor)
 	fmt.Fprintf(&b, "<p class=\"muted\">The Blob status page</p><h1>%s</h1><span class=\"pill\">%s</span>", html.EscapeString(p.App), html.EscapeString(p.Overall))
 	fmt.Fprintf(&b, "<div class=\"grid\"><div class=\"muted\">app status</div><div>%s</div><div class=\"muted\">route</div><div>%s, HTTP %d, %dms</div><div class=\"muted\">url</div><div><a href=\"%s\">%s</a></div><div class=\"muted\">generated</div><div class=\"mono\">%s</div></div>", html.EscapeString(p.AppStatus.Status), html.EscapeString(p.RouteHealth.Status), p.RouteHealth.StatusCode, p.RouteHealth.LatencyMS, html.EscapeString(p.AppStatus.URL), html.EscapeString(p.AppStatus.URL), html.EscapeString(p.GeneratedAt.Format(time.RFC3339)))
+	if len(p.Monitors) > 0 {
+		fmt.Fprintf(&b, "<div class=\"issues\"><h2>Monitors</h2>")
+		for _, mon := range p.Monitors {
+			fmt.Fprintf(&b, "<div class=\"issue\"><strong>%s</strong> %s", html.EscapeString(mon.Name), html.EscapeString(mon.Health.Status))
+			if mon.Health.StatusCode != 0 {
+				fmt.Fprintf(&b, " HTTP %d", mon.Health.StatusCode)
+			}
+			if mon.Health.LatencyMS != 0 {
+				fmt.Fprintf(&b, " %dms", mon.Health.LatencyMS)
+			}
+			if mon.Health.Error != "" {
+				fmt.Fprintf(&b, "<p class=\"muted\">%s</p>", html.EscapeString(mon.Health.Error))
+			}
+			fmt.Fprintf(&b, "</div>")
+		}
+		fmt.Fprintf(&b, "</div>")
+	}
 	fmt.Fprintf(&b, "<div class=\"issues\"><h2>Doctor issues</h2>")
 	if len(p.DoctorIssues) == 0 {
 		fmt.Fprintf(&b, "<p class=\"muted\">No current public issues for this app.</p>")

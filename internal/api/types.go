@@ -248,13 +248,14 @@ type StatusPageResponse struct {
 }
 
 type PublicStatusPage struct {
-	App          string              `json:"app"`
-	URL          string              `json:"url"`
-	Overall      string              `json:"overall"`
-	GeneratedAt  time.Time           `json:"generated_at"`
-	AppStatus    PublicAppStatus     `json:"app_status"`
-	RouteHealth  RouteHealth         `json:"route_health"`
-	DoctorIssues []PublicDoctorIssue `json:"doctor_issues"`
+	App          string                `json:"app"`
+	URL          string                `json:"url"`
+	Overall      string                `json:"overall"`
+	GeneratedAt  time.Time             `json:"generated_at"`
+	AppStatus    PublicAppStatus       `json:"app_status"`
+	RouteHealth  RouteHealth           `json:"route_health"`
+	DoctorIssues []PublicDoctorIssue   `json:"doctor_issues"`
+	Monitors     []PublicMonitorStatus `json:"monitors,omitempty"`
 }
 
 type PublicAppStatus struct {
@@ -284,6 +285,52 @@ type PublicDoctorIssue struct {
 	Title     string `json:"title"`
 	Detail    string `json:"detail,omitempty"`
 	Remediate string `json:"remediate,omitempty"`
+}
+
+type PublicMonitorStatus struct {
+	Name      string      `json:"name"`
+	URL       string      `json:"url"`
+	Health    RouteHealth `json:"health"`
+	UpdatedAt time.Time   `json:"updated_at,omitempty"`
+}
+
+// Uptime monitors
+
+type Monitor struct {
+	Name                string      `json:"name"`
+	App                 string      `json:"app,omitempty"`
+	URL                 string      `json:"url"`
+	IntervalSeconds     int         `json:"interval_seconds"`
+	TimeoutSeconds      int         `json:"timeout_seconds"`
+	ExpectedStatus      int         `json:"expected_status"`
+	AlertWebhook        string      `json:"alert_webhook,omitempty"`
+	Enabled             bool        `json:"enabled"`
+	ConsecutiveFailures int         `json:"consecutive_failures"`
+	LastCheck           RouteHealth `json:"last_check"`
+	LastAlertStatus     string      `json:"last_alert_status,omitempty"`
+	LastAlertAt         time.Time   `json:"last_alert_at,omitempty"`
+	CreatedAt           time.Time   `json:"created_at"`
+	UpdatedAt           time.Time   `json:"updated_at"`
+}
+
+type AddMonitorRequest struct {
+	Name            string `json:"name"`
+	App             string `json:"app,omitempty"`
+	URL             string `json:"url,omitempty"`
+	Path            string `json:"path,omitempty"`
+	IntervalSeconds int    `json:"interval_seconds,omitempty"`
+	TimeoutSeconds  int    `json:"timeout_seconds,omitempty"`
+	ExpectedStatus  int    `json:"expected_status,omitempty"`
+	AlertWebhook    string `json:"alert_webhook,omitempty"`
+	Enabled         *bool  `json:"enabled,omitempty"`
+}
+
+type ListMonitorsResponse struct {
+	Monitors []Monitor `json:"monitors"`
+}
+
+type MonitorResponse struct {
+	Monitor Monitor `json:"monitor"`
 }
 
 // Audit log

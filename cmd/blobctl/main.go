@@ -94,6 +94,11 @@ Usage:
   blob status-pages show <app>
   blob status-pages disable <app> [--yes]
 
+  blob monitors add <app> [--path P] [--interval S] [--webhook URL]
+  blob monitors list
+  blob monitors show <name>
+  blob monitors remove <name> [--yes]
+
   blob plugins set <app> [--pre CMD] [--post CMD] [--timeout S]
   blob plugins list
   blob plugins show <app>
@@ -207,7 +212,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.40.0"
+var version = "0.41.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -271,6 +276,8 @@ func main() {
 		cmdIdentity(args)
 	case "status-pages", "statuspage":
 		cmdStatusPages(args)
+	case "monitors", "monitor":
+		cmdMonitors(args)
 	case "plugins", "plugin":
 		cmdPlugins(args)
 	case "volumes":
@@ -1642,6 +1649,19 @@ func printStatusPage(out *api.StatusPageResponse) {
 		fmt.Printf(" - %s", out.Status.RouteHealth.Error)
 	}
 	fmt.Println()
+	if len(out.Status.Monitors) > 0 {
+		fmt.Println("monitors:")
+		for _, mon := range out.Status.Monitors {
+			fmt.Printf("  %s: %s", mon.Name, mon.Health.Status)
+			if mon.Health.StatusCode != 0 {
+				fmt.Printf(" HTTP %d", mon.Health.StatusCode)
+			}
+			if mon.Health.Error != "" {
+				fmt.Printf(" - %s", mon.Health.Error)
+			}
+			fmt.Println()
+		}
+	}
 	if len(out.Status.DoctorIssues) == 0 {
 		fmt.Println("issues:   none")
 		return
@@ -1656,6 +1676,112 @@ func printStatusPage(out *api.StatusPageResponse) {
 		if issue.Detail != "" {
 			fmt.Printf("       %s\n", issue.Detail)
 		}
+	}
+}
+
+func cmdMonitors(args []string) {
+	if len(args) == 0 {
+		die("usage: blob monitors <add|list|show|remove> ...")
+	}
+	c := mustClient()
+	switch args[0] {
+	case "add":
+		flags := parseFlags(args[1:])
+		target := positional(flags, 0)
+		enabled := flags["disabled"] != "true"
+		req := &api.AddMonitorRequest{
+			Name:            flags["name"],
+			App:             firstNonEmpty(flags["app"], target),
+			URL:             flags["url"],
+			Path:            flags["path"],
+			IntervalSeconds: atoi(flags["interval"]),
+			TimeoutSeconds:  atoi(flags["timeout"]),
+			ExpectedStatus:  atoi(firstNonEmpty(flags["status"], flags["expected-status"])),
+			AlertWebhook:    flags["webhook"],
+			Enabled:         &enabled,
+		}
+		if req.App == "" && req.URL == "" {
+			die("usage: blob monitors add <app> [--path P] [--url URL] [--name N] [--interval S] [--timeout S] [--status N] [--webhook URL]")
+		}
+		out, err := c.AddMonitor(context.Background(), req)
+		if err != nil {
+			die("%v", err)
+		}
+		printMonitor(out.Monitor)
+	case "list", "ls":
+		out, err := c.ListMonitors(context.Background())
+		if err != nil {
+			die("%v", err)
+		}
+		if len(out.Monitors) == 0 {
+			fmt.Println("no monitors")
+			return
+		}
+		fmt.Printf("%-24s %-24s %-8s %-12s %-7s %-8s %s\n", "NAME", "APP", "ENABLED", "STATUS", "HTTP", "FAILS", "URL")
+		for _, mon := range out.Monitors {
+			fmt.Printf("%-24s %-24s %-8t %-12s %-7d %-8d %s\n", mon.Name, mon.App, mon.Enabled, mon.LastCheck.Status, mon.LastCheck.StatusCode, mon.ConsecutiveFailures, mon.URL)
+		}
+	case "show":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob monitors show <name>")
+		}
+		out, err := c.ShowMonitor(context.Background(), name)
+		if err != nil {
+			die("%v", err)
+		}
+		printMonitor(out.Monitor)
+	case "remove", "rm", "delete":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob monitors remove <name> [--yes]")
+		}
+		if flags["yes"] != "true" {
+			fmt.Printf("remove monitor %q? type the monitor name to confirm: ", name)
+			var line string
+			fmt.Fscanln(os.Stdin, &line)
+			if line != name {
+				die("aborted")
+			}
+		}
+		if err := c.RemoveMonitor(context.Background(), name); err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("removed monitor %s\n", name)
+	default:
+		die("unknown monitors subcommand: %s", args[0])
+	}
+}
+
+func printMonitor(mon api.Monitor) {
+	fmt.Printf("name:     %s\n", mon.Name)
+	if mon.App != "" {
+		fmt.Printf("app:      %s\n", mon.App)
+	}
+	fmt.Printf("url:      %s\n", mon.URL)
+	fmt.Printf("enabled:  %t\n", mon.Enabled)
+	fmt.Printf("interval: %ds\n", mon.IntervalSeconds)
+	fmt.Printf("timeout:  %ds\n", mon.TimeoutSeconds)
+	fmt.Printf("expect:   HTTP %d\n", mon.ExpectedStatus)
+	fmt.Printf("status:   %s", mon.LastCheck.Status)
+	if mon.LastCheck.StatusCode != 0 {
+		fmt.Printf(" HTTP %d", mon.LastCheck.StatusCode)
+	}
+	if mon.LastCheck.LatencyMS != 0 {
+		fmt.Printf(" %dms", mon.LastCheck.LatencyMS)
+	}
+	if mon.LastCheck.Error != "" {
+		fmt.Printf(" - %s", mon.LastCheck.Error)
+	}
+	fmt.Println()
+	fmt.Printf("failures: %d\n", mon.ConsecutiveFailures)
+	if !mon.LastCheck.CheckedAt.IsZero() {
+		fmt.Printf("checked:  %s\n", mon.LastCheck.CheckedAt.Format(time.RFC3339))
+	}
+	if mon.AlertWebhook != "" {
+		fmt.Println("webhook:  configured")
 	}
 }
 
