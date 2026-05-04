@@ -21,6 +21,7 @@ This prints a self-contained shell script that:
 - installs Docker (latest from docker.com)
 - installs Nomad (latest from HashiCorp APT)
 - writes `/etc/nomad.d/client.hcl` pointing at your existing Blob server
+- optionally installs Kata Containers and marks the node `blob_kata=true` when run with `ENABLE_KATA=1`
 - enables and starts both services
 - runs `docker login registry.<base-domain>` using the credentials from the existing Blob host's `/etc/blob/registry-credentials.txt`, so the first workload to schedule on this node can pull from the private registry without manual setup
 
@@ -35,6 +36,12 @@ Copy `join.sh` to the new node and run as root:
 ```sh
 scp join.sh root@new-node.example.com:/tmp/
 ssh root@new-node.example.com 'sh /tmp/join.sh'
+```
+
+For a worker that should accept `isolation: kata` workloads, run the same script with `/dev/kvm` exposed and `ENABLE_KATA=1`:
+
+```sh
+ssh root@new-node.example.com 'ENABLE_KATA=1 sh /tmp/join.sh'
 ```
 
 Or paste it into a remote console session.
@@ -52,9 +59,9 @@ curl -fsSL https://raw.githubusercontent.com/darvell/blob/main/scripts/bootstrap
          sh
 ```
 
-Required env: `BLOB_SERVER_RPC` (host:port of the existing platform's Nomad RPC, default port 4647). Optional: `DC` (default `dc1`), `REGISTRY` + `REGISTRY_USER` + `REGISTRY_PASS` (skip docker login if absent — the first workload's pull will fail with `unauthorized` if you skip and don't `docker login` manually later).
+Required env: `BLOB_SERVER_RPC` (host:port of the existing platform's Nomad RPC, default port 4647). Optional: `DC` (default `dc1`), `REGISTRY` + `REGISTRY_USER` + `REGISTRY_PASS` (skip docker login if absent — the first workload's pull will fail with `unauthorized` if you skip and don't `docker login` manually later), `ENABLE_KATA=1`, and `KATA_VERSION` (default `3.30.0`).
 
-Both paths produce the same outcome: a Nomad client at `/etc/nomad.d/blob-client.hcl` (static script) or `/etc/nomad.d/client.hcl` (`blob nodes join`) pointing at the existing platform's Nomad RPC, registered with `client { enabled = true }`.
+Both paths produce the same outcome: a Nomad client at `/etc/nomad.d/blob-client.hcl` (static script) or `/etc/nomad.d/client.hcl` (`blob nodes join`) pointing at the existing platform's Nomad RPC, registered with `client { enabled = true }`. With `ENABLE_KATA=1`, the node also has Docker runtime `kata-runtime` and Nomad meta `blob_kata=true`.
 
 ## 3. Verify
 
@@ -100,9 +107,20 @@ blob nodes undrain <node-id>
 3. On the node itself: `sudo systemctl stop nomad && sudo systemctl disable nomad`.
 4. Wait one more minute for the heartbeat to expire on the server. The node will drop out of `blob nodes list`.
 
+## Kata-capable workers
+
+Kata support is explicit per node. A `blob.yaml` with `isolation: kata` renders a Nomad constraint for `blob_kata=true`, so only nodes joined with `ENABLE_KATA=1` can run it. Verify a joined worker with:
+
+```sh
+ssh root@new-node.example.com 'docker run --rm --runtime kata-runtime hello-world'
+nomad node status -verbose | grep 'blob_kata = true'
+```
+
+If the fleet has no matching node, the deploy stays pending with a constraint mismatch. It will not silently downgrade to normal Docker isolation.
+
 ## Heterogeneous fleets
 
-The Blob places work based on architecture, RAM, and free disk. Mixing Pi 4s, VPSes, and bare metal works as long as image targets are compatible.
+The Blob places work based on architecture, RAM, isolation capability, and free disk. Mixing Pi 4s, VPSes, and bare metal works as long as image targets are compatible.
 
 - Pi 4s are arm64; most VPSes are amd64. Either build multi-arch images (`docker buildx build --platform linux/amd64,linux/arm64`) or pin a workload to one arch with `arch:` in `blob.yaml` (planned for v0.4 — for now use Nomad constraints if needed).
 - Storage-heavy nodes can be labeled and used for stateful workloads only.

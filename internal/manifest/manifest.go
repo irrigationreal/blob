@@ -13,29 +13,30 @@ import (
 // Component is a single workload that can stand on its own. A top-level
 // Manifest is itself a component plus app-level orchestration (Components).
 type Component struct {
-	Name        string            `yaml:"name,omitempty"`     // optional in single-component manifests; required when used inside Components
-	Form        string            `yaml:"form,omitempty"`     // web-service | daemon | job | cronjob | static
-	Domain      string            `yaml:"domain,omitempty"`   // overrides default <name>.<base>
-	Domains     []string          `yaml:"domains,omitempty"`  // additional hostnames
-	Port        int               `yaml:"port,omitempty"`     // required for web-service unless inferable
-	Image       string            `yaml:"image,omitempty"`    // if set, deploy registry image directly
-	Command     []string          `yaml:"command,omitempty"`  // override the image's entrypoint command
-	CPU         int               `yaml:"cpu,omitempty"`      // MHz
-	Memory      int               `yaml:"memory,omitempty"`   // MiB
-	Replicas    int               `yaml:"replicas,omitempty"` // count
-	Env         map[string]string `yaml:"env,omitempty"`      // literal env vars
-	Secrets     []SecretRef       `yaml:"secrets,omitempty"`  // env vars sourced from the secret store
-	Services    []string          `yaml:"services,omitempty"` // managed services to bind (Postgres etc.); injects DATABASE_URL etc.
-	Schedule    string            `yaml:"schedule,omitempty"` // cron expression for cronjob form
-	Volumes     []VolumeMount     `yaml:"volumes,omitempty"`  // per-app Docker named volumes
-	Sidecars    []Sidecar         `yaml:"sidecars,omitempty"` // additional containers in the same Nomad group (Bundle)
+	Name      string            `yaml:"name,omitempty"`      // optional in single-component manifests; required when used inside Components
+	Form      string            `yaml:"form,omitempty"`      // web-service | daemon | job | cronjob | static
+	Domain    string            `yaml:"domain,omitempty"`    // overrides default <name>.<base>
+	Domains   []string          `yaml:"domains,omitempty"`   // additional hostnames
+	Port      int               `yaml:"port,omitempty"`      // required for web-service unless inferable
+	Image     string            `yaml:"image,omitempty"`     // if set, deploy registry image directly
+	Command   []string          `yaml:"command,omitempty"`   // override the image's entrypoint command
+	Isolation string            `yaml:"isolation,omitempty"` // docker | kata
+	CPU       int               `yaml:"cpu,omitempty"`       // MHz
+	Memory    int               `yaml:"memory,omitempty"`    // MiB
+	Replicas  int               `yaml:"replicas,omitempty"`  // count
+	Env       map[string]string `yaml:"env,omitempty"`       // literal env vars
+	Secrets   []SecretRef       `yaml:"secrets,omitempty"`   // env vars sourced from the secret store
+	Services  []string          `yaml:"services,omitempty"`  // managed services to bind (Postgres etc.); injects DATABASE_URL etc.
+	Schedule  string            `yaml:"schedule,omitempty"`  // cron expression for cronjob form
+	Volumes   []VolumeMount     `yaml:"volumes,omitempty"`   // per-app Docker named volumes
+	Sidecars  []Sidecar         `yaml:"sidecars,omitempty"`  // additional containers in the same Nomad group (Bundle)
 
 	// Static-site fields (form: static)
-	Root        string   `yaml:"root,omitempty"`        // directory inside the source tree to serve (default: ".")
-	Build       string   `yaml:"build,omitempty"`       // optional build command (e.g. "npm run build"); output should land in `root` or `dist`
-	Index       string   `yaml:"index,omitempty"`       // index file (default: index.html)
-	NotFound    string   `yaml:"not_found,omitempty"`   // 404 path (e.g. /404.html); also used for SPA fallback when SPA is true
-	SPA         bool     `yaml:"spa,omitempty"`         // if true, serve index.html for any unmatched path (SPA routing)
+	Root     string `yaml:"root,omitempty"`      // directory inside the source tree to serve (default: ".")
+	Build    string `yaml:"build,omitempty"`     // optional build command (e.g. "npm run build"); output should land in `root` or `dist`
+	Index    string `yaml:"index,omitempty"`     // index file (default: index.html)
+	NotFound string `yaml:"not_found,omitempty"` // 404 path (e.g. /404.html); also used for SPA fallback when SPA is true
+	SPA      bool   `yaml:"spa,omitempty"`       // if true, serve index.html for any unmatched path (SPA routing)
 
 	// Static is a shorthand for `form: static, root: <dir>`. When set,
 	// it implies form: static unless the operator overrode form. Useful
@@ -74,9 +75,9 @@ type SecretRef struct {
 //   - a single Component (top-level Name + Form, no Components list), or
 //   - an App (top-level Name + Components list).
 type Manifest struct {
-	Component   `yaml:",inline"`         // single-component shorthand
-	Environment string      `yaml:"environment,omitempty"` // prod | staging | pr-NNN ...
-	Components  []Component `yaml:"components,omitempty"`  // multi-component App
+	Component   `yaml:",inline"` // single-component shorthand
+	Environment string           `yaml:"environment,omitempty"` // prod | staging | pr-NNN ...
+	Components  []Component      `yaml:"components,omitempty"`  // multi-component App
 }
 
 var nameRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
@@ -136,6 +137,7 @@ func (c *Component) applyDefaults() {
 		c.Replicas = 1
 	}
 	c.Name = strings.ToLower(strings.TrimSpace(c.Name))
+	c.Isolation = strings.ToLower(strings.TrimSpace(c.Isolation))
 }
 
 // IsApp returns true if this manifest declares multiple components.
@@ -181,6 +183,11 @@ func (c *Component) validate() error {
 		return fmt.Errorf("form %q is reserved but not yet implemented", c.Form)
 	default:
 		return fmt.Errorf("unknown form %q", c.Form)
+	}
+	switch c.Isolation {
+	case "", "docker", "kata":
+	default:
+		return fmt.Errorf("unknown isolation %q", c.Isolation)
 	}
 	if c.Form == "cronjob" && c.Schedule == "" {
 		return fmt.Errorf("cronjob requires schedule")

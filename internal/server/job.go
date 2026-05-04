@@ -26,9 +26,10 @@ func renderJob(req *api.DeployRequest, image string, port int, domain, dc string
 		form = "web-service"
 	}
 
+	isolation := normalizeIsolation(req.Isolation)
 	envBlock := renderEnvBlock(req.Env, req.Secrets)
 	volumeBlocks, volumeMounts := renderVolumes(req.Volumes, namespacedID)
-	sidecars := renderSidecars(req.Sidecars)
+	sidecars := renderSidecars(req.Sidecars, isolation)
 
 	switch form {
 	case "job":
@@ -44,16 +45,46 @@ func renderJob(req *api.DeployRequest, image string, port int, domain, dc string
 	}
 }
 
+func normalizeIsolation(isolation string) string {
+	switch strings.ToLower(strings.TrimSpace(isolation)) {
+	case "kata":
+		return "kata"
+	default:
+		return ""
+	}
+}
+
+func renderIsolationConstraint(isolation string) string {
+	if normalizeIsolation(isolation) != "kata" {
+		return ""
+	}
+	return `    constraint {
+      attribute = "${meta.blob_kata}"
+      value     = "true"
+    }
+`
+}
+
+func renderDockerRuntime(isolation string) string {
+	if normalizeIsolation(isolation) != "kata" {
+		return ""
+	}
+	return `        runtime = "kata-runtime"
+`
+}
+
 func renderWebService(id, dc, image string, port int, domain string, req *api.DeployRequest, envBlock, volBlocks, volMounts, sidecars string) string {
 	cmdBlock := renderCommandBlock(req.Command)
 	traefikTags := renderTraefikTags(id, domain, req.Domains)
+	constraintBlock := renderIsolationConstraint(req.Isolation)
+	runtimeBlock := renderDockerRuntime(req.Isolation)
 	return fmt.Sprintf(`job %q {
   datacenters = [%q]
   type = "service"
 
   group "web" {
     count = %d
-%s
+%s%s
     network {
       port "http" {
         to = %d
@@ -73,7 +104,7 @@ func renderWebService(id, dc, image string, port int, domain string, req *api.De
       config {
         image = %q
         ports = ["http"]
-%s%s      }
+%s%s%s      }
 %s      resources {
         cpu    = %d
         memory = %d
@@ -81,7 +112,7 @@ func renderWebService(id, dc, image string, port int, domain string, req *api.De
     }
 %s  }
 }
-`, id, dc, req.Replicas, volBlocks, port, id, traefikTags, image, cmdBlock, volMounts, envBlock, req.CPU, req.Memory, sidecars)
+`, id, dc, req.Replicas, constraintBlock, volBlocks, port, id, traefikTags, image, runtimeBlock, cmdBlock, volMounts, envBlock, req.CPU, req.Memory, sidecars)
 }
 
 // renderTraefikTags returns the tags for a service. The primary domain plus any
@@ -112,18 +143,20 @@ func renderTraefikTags(id, primary string, extras []string) string {
 
 func renderDaemon(id, dc, image string, req *api.DeployRequest, envBlock, volBlocks, volMounts, sidecars string) string {
 	cmdBlock := renderCommandBlock(req.Command)
+	constraintBlock := renderIsolationConstraint(req.Isolation)
+	runtimeBlock := renderDockerRuntime(req.Isolation)
 	return fmt.Sprintf(`job %q {
   datacenters = [%q]
   type = "service"
 
   group "main" {
     count = %d
-%s
+%s%s
     task "app" {
       driver = "docker"
       config {
         image = %q
-%s%s      }
+%s%s%s      }
 %s      resources {
         cpu    = %d
         memory = %d
@@ -131,7 +164,7 @@ func renderDaemon(id, dc, image string, req *api.DeployRequest, envBlock, volBlo
     }
 %s  }
 }
-`, id, dc, req.Replicas, volBlocks, image, cmdBlock, volMounts, envBlock, req.CPU, req.Memory, sidecars)
+`, id, dc, req.Replicas, constraintBlock, volBlocks, image, runtimeBlock, cmdBlock, volMounts, envBlock, req.CPU, req.Memory, sidecars)
 }
 
 func renderBatch(id, dc, image string, req *api.DeployRequest, envBlock, volBlocks, volMounts, sidecars string, periodic bool, cron string) string {
@@ -146,18 +179,20 @@ func renderBatch(id, dc, image string, req *api.DeployRequest, envBlock, volBloc
 `, cron)
 	}
 	cmdBlock := renderCommandBlock(req.Command)
+	constraintBlock := renderIsolationConstraint(req.Isolation)
+	runtimeBlock := renderDockerRuntime(req.Isolation)
 	return fmt.Sprintf(`job %q {
   datacenters = [%q]
   type = "batch"
 %s
   group "main" {
     count = %d
-%s
+%s%s
     task "app" {
       driver = "docker"
       config {
         image = %q
-%s%s      }
+%s%s%s      }
 %s      resources {
         cpu    = %d
         memory = %d
@@ -165,7 +200,7 @@ func renderBatch(id, dc, image string, req *api.DeployRequest, envBlock, volBloc
     }
 %s  }
 }
-`, id, dc, periodicBlock, req.Replicas, volBlocks, image, cmdBlock, volMounts, envBlock, req.CPU, req.Memory, sidecars)
+`, id, dc, periodicBlock, req.Replicas, constraintBlock, volBlocks, image, runtimeBlock, cmdBlock, volMounts, envBlock, req.CPU, req.Memory, sidecars)
 }
 
 // renderCommandBlock writes Docker driver `command` and `args` HCL when set.
@@ -230,10 +265,11 @@ func renderVolumes(vols []api.VolumeMount, namespacedID string) (string, string)
 }
 
 // renderSidecars returns extra `task` blocks for a Bundle.
-func renderSidecars(s []api.Sidecar) string {
+func renderSidecars(s []api.Sidecar, isolation string) string {
 	if len(s) == 0 {
 		return ""
 	}
+	runtimeBlock := renderDockerRuntime(isolation)
 	var sb strings.Builder
 	for _, sc := range s {
 		cpu := sc.CPU
@@ -257,13 +293,13 @@ func renderSidecars(s []api.Sidecar) string {
       driver = "docker"
       config {
         image = %q
-%s      }
+%s%s      }
 %s      resources {
         cpu    = %d
         memory = %d
       }
     }
-`, sc.Name, sc.Image, argsHCL, envBlock, cpu, mem)
+`, sc.Name, sc.Image, runtimeBlock, argsHCL, envBlock, cpu, mem)
 	}
 	return sb.String()
 }

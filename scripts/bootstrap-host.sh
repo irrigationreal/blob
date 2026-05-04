@@ -10,6 +10,8 @@
 #   ACME_EMAIL    — email for Let's Encrypt registration (default admin@$BASE_DOMAIN)
 #   REGISTRY_USER — registry username (default: blob)
 #   PROFILE       — core | ultralight (default: core)
+#   ENABLE_KATA   — 1 installs Kata Containers and marks this Nomad node blob_kata=true
+#   KATA_VERSION  — Kata static release to install when ENABLE_KATA=1 (default: 3.30.0)
 set -eu
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -22,6 +24,51 @@ fi
 ACME_EMAIL=${ACME_EMAIL:-admin@$BASE_DOMAIN}
 REGISTRY_USER=${REGISTRY_USER:-blob}
 PROFILE=${PROFILE:-core}
+ENABLE_KATA=${ENABLE_KATA:-0}
+KATA_VERSION=${KATA_VERSION:-3.30.0}
+
+install_kata() {
+  if [ "$ENABLE_KATA" != "1" ]; then
+    return 0
+  fi
+  echo "==> kata containers"
+  if [ ! -e /dev/kvm ]; then
+    echo "ENABLE_KATA=1 requires hardware virtualization exposed at /dev/kvm" >&2
+    exit 1
+  fi
+  apt-get install -y zstd jq
+  arch=$(dpkg --print-architecture)
+  case "$arch" in
+    amd64|arm64|ppc64le|s390x) kata_arch="$arch" ;;
+    *) echo "unsupported Kata architecture: $arch" >&2; exit 1 ;;
+  esac
+  if [ ! -x /opt/kata/bin/kata-runtime ]; then
+    url="https://github.com/kata-containers/kata-containers/releases/download/${KATA_VERSION}/kata-static-${KATA_VERSION}-${kata_arch}.tar.zst"
+    tmp="/tmp/kata-static-${KATA_VERSION}-${kata_arch}.tar.zst"
+    curl -fL "$url" -o "$tmp"
+    tar --zstd -xf "$tmp" -C /
+  fi
+  mkdir -p /etc/docker
+  if [ ! -s /etc/docker/daemon.json ]; then
+    echo '{}' > /etc/docker/daemon.json
+  fi
+  tmp_json=$(mktemp)
+  jq '.runtimes = (.runtimes // {}) | .runtimes["kata-runtime"] = {"runtimeType":"/opt/kata/bin/containerd-shim-kata-v2"}' \
+    /etc/docker/daemon.json > "$tmp_json"
+  mv "$tmp_json" /etc/docker/daemon.json
+  systemctl restart docker || true
+  /opt/kata/bin/kata-runtime check
+}
+
+kata_nomad_meta() {
+  if [ "$ENABLE_KATA" = "1" ]; then
+    cat <<'EOF'
+  meta {
+    blob_kata = "true"
+  }
+EOF
+  fi
+}
 
 echo "==> apt prereqs"
 apt-get update
@@ -38,6 +85,10 @@ if ! command -v docker >/dev/null; then
   apt-get update
   apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 fi
+
+systemctl enable --now docker
+install_kata
+KATA_META=$(kata_nomad_meta)
 
 echo "==> nomad"
 if ! command -v nomad >/dev/null; then
@@ -61,9 +112,13 @@ server {
 }
 client {
   enabled = true
+$KATA_META
 }
 plugin "docker" {
-  config { allow_privileged = false }
+  config {
+    allow_privileged = false
+    allow_runtimes   = ["runc", "kata-runtime"]
+  }
 }
 EOF
 systemctl enable --now docker nomad

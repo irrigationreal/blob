@@ -23,6 +23,9 @@
 #                              so the first workload to schedule here can pull.
 #                              Mirror what's in /etc/blob/registry-credentials.txt
 #                              on the existing platform host.
+#   ENABLE_KATA=1 + KATA_VERSION=3.30.0
+#                            — install Kata Containers, configure Docker runtime
+#                              kata-runtime, and advertise Nomad meta blob_kata=true.
 set -eu
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -33,6 +36,51 @@ if [ -z "${BLOB_SERVER_RPC:-}" ]; then
   exit 1
 fi
 DC=${DC:-dc1}
+ENABLE_KATA=${ENABLE_KATA:-0}
+KATA_VERSION=${KATA_VERSION:-3.30.0}
+
+install_kata() {
+  if [ "$ENABLE_KATA" != "1" ]; then
+    return 0
+  fi
+  echo "==> kata containers"
+  if [ ! -e /dev/kvm ]; then
+    echo "ENABLE_KATA=1 requires hardware virtualization exposed at /dev/kvm" >&2
+    exit 1
+  fi
+  apt-get install -y zstd jq
+  arch=$(dpkg --print-architecture)
+  case "$arch" in
+    amd64|arm64|ppc64le|s390x) kata_arch="$arch" ;;
+    *) echo "unsupported Kata architecture: $arch" >&2; exit 1 ;;
+  esac
+  if [ ! -x /opt/kata/bin/kata-runtime ]; then
+    url="https://github.com/kata-containers/kata-containers/releases/download/${KATA_VERSION}/kata-static-${KATA_VERSION}-${kata_arch}.tar.zst"
+    tmp="/tmp/kata-static-${KATA_VERSION}-${kata_arch}.tar.zst"
+    curl -fL "$url" -o "$tmp"
+    tar --zstd -xf "$tmp" -C /
+  fi
+  mkdir -p /etc/docker
+  if [ ! -s /etc/docker/daemon.json ]; then
+    echo '{}' > /etc/docker/daemon.json
+  fi
+  tmp_json=$(mktemp)
+  jq '.runtimes = (.runtimes // {}) | .runtimes["kata-runtime"] = {"runtimeType":"/opt/kata/bin/containerd-shim-kata-v2"}' \
+    /etc/docker/daemon.json > "$tmp_json"
+  mv "$tmp_json" /etc/docker/daemon.json
+  systemctl restart docker || true
+  /opt/kata/bin/kata-runtime check
+}
+
+kata_nomad_meta() {
+  if [ "$ENABLE_KATA" = "1" ]; then
+    cat <<'EOF'
+  meta {
+    blob_kata = "true"
+  }
+EOF
+  fi
+}
 
 echo "==> apt prereqs"
 apt-get update
@@ -52,6 +100,10 @@ if ! command -v docker >/dev/null; then
   apt-get update
   apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 fi
+
+systemctl enable --now docker
+install_kata
+KATA_META=$(kata_nomad_meta)
 
 echo "==> nomad"
 if ! command -v nomad >/dev/null; then
@@ -79,9 +131,13 @@ bind_addr  = "0.0.0.0"
 client {
   enabled = true
   servers = ["$BLOB_SERVER_RPC"]
+$KATA_META
 }
 plugin "docker" {
-  config { allow_privileged = false }
+  config {
+    allow_privileged = false
+    allow_runtimes   = ["runc", "kata-runtime"]
+  }
 }
 EOF
 # If the host had a server-mode config from bootstrap-host.sh (named

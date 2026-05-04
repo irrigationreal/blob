@@ -53,6 +53,7 @@ The same platform host runs these via `blob import compose|procfile|fly` → `bl
 | **Auto-detect** Dockerfile / Compose / `index.html` / build script | shipped  |
 | **Static sites** via `form: static` (Caddy serves a folder)    | shipped  |
 | `web-service`, `daemon`, `job`, `cronjob` workload forms       | shipped  |
+| **Kata microVM isolation** via `isolation: kata` or `blob deploy --isolation kata` on nodes bootstrapped with `ENABLE_KATA=1` | shipped |
 | Multi-component **App** manifest (web + worker + cron)         | shipped  |
 | **Bundle** sidecars (co-scheduled tasks sharing the netns)     | shipped  |
 | Per-component **command override**                             | shipped  |
@@ -92,7 +93,7 @@ The same platform host runs these via `blob import compose|procfile|fly` → `bl
 
 The full v1 spec ([`docs/the-blob-spec.md`](docs/the-blob-spec.md)) is the destination. The runtime ships the deploy core, operability surfaces, and the first managed services. Honest gap list:
 
-- Kata microVMs, blebs warm pool, hot journal volumes, rewind
+- Blebs warm pool, hot journal volumes, rewind
 - Resource graph + manifest projection-hash drift detection
 - **Tempo/Prometheus**: shipped in v0.10 — see managed services above
 - **Multi-region** active-passive failover

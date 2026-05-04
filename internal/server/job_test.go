@@ -1,6 +1,7 @@
 package server
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -108,6 +109,52 @@ func TestRenderJobCommandOverride(t *testing.T) {
 	}
 	if !strings.Contains(job, `args    = ["worker.js"]`) {
 		t.Fatalf("missing args:\n%s", job)
+	}
+}
+
+func TestRenderJobKataIsolation(t *testing.T) {
+	req := &api.DeployRequest{
+		App: "secure", Form: "web-service", CPU: 100, Memory: 128, Replicas: 1, Isolation: "kata",
+		Sidecars: []api.Sidecar{{Name: "helper", Image: "helper:1"}},
+	}
+	job := renderJob(req, "img:1", 8080, "secure.example.com", "dc1", "secure")
+	for _, want := range []string{
+		`attribute = "${meta.blob_kata}"`,
+		`value     = "true"`,
+		`runtime = "kata-runtime"`,
+		`task "helper"`,
+	} {
+		if !strings.Contains(job, want) {
+			t.Fatalf("kata job missing %q:\n%s", want, job)
+		}
+	}
+	if strings.Count(job, `runtime = "kata-runtime"`) != 2 {
+		t.Fatalf("primary and sidecar should both use kata runtime:\n%s", job)
+	}
+}
+
+func TestJoinScriptSupportsKata(t *testing.T) {
+	script := joinScript("10.0.0.1:4647", "dc1", "registry.example", "blob", "secret")
+	for _, want := range []string{
+		`apt-get install -y ca-certificates curl gnupg lsb-release iproute2`,
+		`ENABLE_KATA=${ENABLE_KATA:-0}`,
+		`kata-static-${KATA_VERSION}-${kata_arch}.tar.zst`,
+		`runtimeType":"/opt/kata/bin/containerd-shim-kata-v2`,
+		`allow_runtimes   = ["runc", "kata-runtime"]`,
+		`blob_kata = "true"`,
+		`$KATA_META`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("join script missing %q:\n%s", want, script)
+		}
+	}
+	if strings.Contains(script, "%!") {
+		t.Fatalf("join script has fmt artifact:\n%s", script)
+	}
+	cmd := exec.Command("sh", "-n")
+	cmd.Stdin = strings.NewReader(script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("join script is not valid sh: %v\n%s", err, out)
 	}
 }
 

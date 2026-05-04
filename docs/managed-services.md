@@ -2,7 +2,7 @@
 
 The Blob provisions stateful services as Nomad jobs with persistent volumes and injects credentials into apps that bind them.
 
-v0.5 ships **managed Postgres** (with backup/restore) and **managed Valkey**. ScyllaDB and NATS are planned and follow the same pattern.
+The current managed-service set includes Postgres (with backup/restore), Valkey, Loki, Grafana, Tempo, Prometheus, NATS, object storage, MySQL, ClickHouse, MongoDB, and ScyllaDB.
 
 ## Postgres
 

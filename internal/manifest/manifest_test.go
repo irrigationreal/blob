@@ -108,3 +108,17 @@ func TestEnvironmentValidation(t *testing.T) {
 		t.Fatal("expected error for invalid environment")
 	}
 }
+
+func TestIsolationValidation(t *testing.T) {
+	m := &Manifest{Component: Component{Name: "x", Port: 1, Isolation: "kata"}}
+	m.applyDefaults()
+	if err := m.Validate(); err != nil {
+		t.Fatalf("kata isolation should validate: %v", err)
+	}
+
+	bad := &Manifest{Component: Component{Name: "x", Port: 1, Isolation: "firecracker"}}
+	bad.applyDefaults()
+	if err := bad.Validate(); err == nil {
+		t.Fatal("unknown isolation should error")
+	}
+}

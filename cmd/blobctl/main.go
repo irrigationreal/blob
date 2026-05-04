@@ -32,6 +32,7 @@ Usage:
   blob import fly <path>                          Translate fly.toml → blob.yaml
   blob login --endpoint URL [--token T]           Save endpoint and token
   blob deploy [--name N] [--port P] [--env ENV]   Deploy current folder
+  blob deploy --isolation kata                    Run the workload with Kata microVM isolation
   blob deploy --static [--root DIR]               Force static-site form (else auto-detected
                                                   from index.html when no blob.yaml exists)
   blob deploy --from <kind> <path>                Import then deploy in one shot
@@ -169,7 +170,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.24.0"
+var version = "0.25.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -504,6 +505,7 @@ func componentToReq(app string, c *manifest.Component, env string) *api.DeployRe
 		Schedule:    c.Schedule,
 		Tag:         c.Image,
 		Command:     c.Command,
+		Isolation:   c.Isolation,
 		Services:    c.Services,
 		Root:        c.Root,
 		Build:       c.Build,
@@ -558,6 +560,14 @@ func cmdDeploy(args []string) {
 	c := mustClient()
 
 	if m.IsApp() {
+		if v := flags["isolation"]; v != "" {
+			for i := range m.Components {
+				m.Components[i].Isolation = v
+			}
+		}
+		if err := m.Validate(); err != nil {
+			die("%v", err)
+		}
 		// Multi-component App: upload source under the app name, then deploy each component.
 		// Each component is registered as a separate Nomad job named "<app>-<component>".
 		if m.Name == "" {
@@ -603,6 +613,9 @@ func cmdDeploy(args []string) {
 	}
 	if v := flags["form"]; v != "" {
 		m.Form = v
+	}
+	if v := flags["isolation"]; v != "" {
+		m.Isolation = v
 	}
 	// --static is a shorthand for `--form static --root .`. Useful for
 	// `blob deploy --static .` in any folder with index.html. We also
@@ -721,9 +734,13 @@ func cmdList() {
 		fmt.Println("no apps deployed")
 		return
 	}
-	fmt.Printf("%-30s %-12s %-10s %-3s %s\n", "APP", "FORM", "STATUS", "N", "URL")
+	fmt.Printf("%-30s %-12s %-10s %-5s %-3s %s\n", "APP", "FORM", "STATUS", "ISOL", "N", "URL")
 	for _, a := range out.Apps {
-		fmt.Printf("%-30s %-12s %-10s %-3d %s\n", a.App, a.Form, a.Status, a.Replicas, a.URL)
+		isolation := a.Isolation
+		if isolation == "" {
+			isolation = "docker"
+		}
+		fmt.Printf("%-30s %-12s %-10s %-5s %-3d %s\n", a.App, a.Form, a.Status, isolation, a.Replicas, a.URL)
 	}
 }
 
@@ -745,6 +762,9 @@ func cmdStatus(args []string) {
 	fmt.Printf("url:      %s\n", out.URL)
 	fmt.Printf("status:   %s\n", out.Status)
 	fmt.Printf("form:     %s\n", out.Form)
+	if out.Isolation != "" {
+		fmt.Printf("isolation: %s\n", out.Isolation)
+	}
 	fmt.Printf("replicas: %d\n", out.Replicas)
 	if len(out.Allocations) > 0 {
 		fmt.Println("allocations:")

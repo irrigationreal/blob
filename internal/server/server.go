@@ -212,6 +212,14 @@ var envRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`)
 
 func validName(s string) bool { return nameRE.MatchString(s) }
 func validEnv(s string) bool  { return s == "" || envRE.MatchString(s) }
+func validIsolation(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "docker", "kata":
+		return true
+	default:
+		return false
+	}
+}
 
 // jobID returns the Nomad job ID for an app/component/environment combination.
 // prod is bare (`<app>` or `<app>-<component>`); other environments append `-env-<name>`.
@@ -322,6 +330,10 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 	if !validEnv(req.Environment) {
 		writeErr(w, 400, "invalid environment")
+		return
+	}
+	if !validIsolation(req.Isolation) {
+		writeErr(w, 400, "invalid isolation")
 		return
 	}
 	src := filepath.Join(s.cfg.SourcesDir, req.App)
@@ -904,6 +916,7 @@ func (s *Server) scheduleJob(ctx context.Context, req *api.DeployRequest, image 
 		App:         req.App,
 		Environment: req.Environment,
 		Form:        req.Form,
+		Isolation:   normalizeIsolation(req.Isolation),
 		Domain:      domain,
 		Image:       image,
 		Services:    req.Services,
@@ -922,6 +935,7 @@ type jobMeta struct {
 	App         string    `json:"app"`
 	Environment string    `json:"environment"`
 	Form        string    `json:"form"`
+	Isolation   string    `json:"isolation,omitempty"`
 	Domain      string    `json:"domain"`
 	Image       string    `json:"image"`
 	Services    []string  `json:"services,omitempty"`
@@ -1038,10 +1052,11 @@ func (s *Server) listApps(ctx context.Context) ([]api.AppSummary, error) {
 			domain = j.ID + "." + s.cfg.BaseDomain
 		}
 		form := ""
-		var image string
+		var image, isolation string
 		if meta, ok := s.loadJobMeta(j.ID); ok {
 			form = meta.Form
 			image = meta.Image
+			isolation = meta.Isolation
 			if meta.Domain != "" {
 				domain = meta.Domain
 			}
@@ -1061,6 +1076,7 @@ func (s *Server) listApps(ctx context.Context) ([]api.AppSummary, error) {
 			URL:         url,
 			Status:      j.Status,
 			Form:        form,
+			Isolation:   isolation,
 			Replicas:    running,
 		})
 	}
@@ -1085,11 +1101,12 @@ func (s *Server) appStatus(ctx context.Context, app string) (*api.StatusResponse
 	}
 	_ = json.Unmarshal(body, &job)
 	form := ""
-	var domain, image string
+	var domain, image, isolation string
 	if meta, ok := s.loadJobMeta(app); ok {
 		form = meta.Form
 		domain = meta.Domain
 		image = meta.Image
+		isolation = meta.Isolation
 	}
 	if form == "" {
 		form = formFromNomadJob(nomadJob{Type: job.Type, Periodic: job.Periodic != nil}, false)
@@ -1108,12 +1125,13 @@ func (s *Server) appStatus(ctx context.Context, app string) (*api.StatusResponse
 	}
 	resp := &api.StatusResponse{
 		AppSummary: api.AppSummary{
-			App:    app,
-			Domain: domain,
-			URL:    url,
-			Image:  image,
-			Form:   form,
-			Status: job.Status,
+			App:       app,
+			Domain:    domain,
+			URL:       url,
+			Image:     image,
+			Form:      form,
+			Isolation: isolation,
+			Status:    job.Status,
 		},
 	}
 	allocBody, err := s.nomadGET(ctx, "/v1/job/"+app+"/allocations")

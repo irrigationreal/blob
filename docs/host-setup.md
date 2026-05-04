@@ -20,6 +20,13 @@ The Blob currently runs on top of Nomad + Docker + Traefik + a private OCI regis
 curl -fsSL https://raw.githubusercontent.com/darvell/blob/main/scripts/bootstrap-host.sh | sudo BASE_DOMAIN=example.com sh
 ```
 
+For a host that can run microVM workloads, expose hardware virtualization at `/dev/kvm` and opt in during bootstrap:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/darvell/blob/main/scripts/bootstrap-host.sh \
+  | sudo BASE_DOMAIN=example.com ENABLE_KATA=1 sh
+```
+
 ### What `bootstrap-host.sh` actually does
 
 The script is ~150 lines and assumes nothing about your machine beyond root + Debian/Ubuntu. Read it once if you want to know exactly what hits disk. Inputs:
@@ -31,16 +38,19 @@ The script is ~150 lines and assumes nothing about your machine beyond root + De
 | `REGISTRY_USER` | no | `blob` | bcrypt-hashed into the registry's htpasswd file. The matching password is auto-generated (24 hex bytes from openssl) and written to `/etc/blob/registry-credentials.txt` mode 0600. |
 | `PROFILE` | no | `core` | `ultralight` skips the registry-on-Nomad step (use a public registry instead) for low-RAM hosts. |
 | `DC` | no | `dc1` | Nomad datacenter name. Most users keep the default. |
+| `ENABLE_KATA` | no | `0` | Set to `1` to install Kata Containers, configure Docker runtime `kata-runtime`, and advertise Nomad node meta `blob_kata=true`. Requires `/dev/kvm`. |
+| `KATA_VERSION` | no | `3.30.0` | Kata static release used when `ENABLE_KATA=1`. |
 
 What it installs / configures, in order:
 
 1. APT prereqs: `ca-certificates`, `curl`, `gnupg`, `ufw`, `lsb-release`, `jq`, `apache2-utils` (for `htpasswd`).
 2. Docker CE + Compose plugin from `download.docker.com`.
-3. Nomad (latest stable) from `apt.releases.hashicorp.com`. Configures it as a single-node server-and-client at `/etc/nomad.d/blob.hcl`, data dir `/opt/nomad/data`. Enables and starts both `docker` and `nomad`.
-4. UFW: opens 22/80/443 inbound only. **Note:** managed-service ports (Loki, Grafana, Tempo, Prometheus, NATS) are NOT opened here. See the [observability doc](observability.md#ufw) for the rules to add before running `blob loki create` etc. — the docker bridge needs `from 172.17.0.0/16` allowed on the relevant port ranges.
-5. Generates the registry htpasswd at `/etc/blob/registry.htpasswd` and the matching plaintext credentials at `/etc/blob/registry-credentials.txt`.
-6. Submits a `traefik:v3.6` Nomad job listening on host ports 80/443 with ACME via HTTP-01, providers.nomad enabled.
-7. Submits a `registry:2` Nomad job under `registry.$BASE_DOMAIN` reading the htpasswd from step 5.
+3. Optional Kata Containers when `ENABLE_KATA=1`: downloads the pinned static Kata release, configures Docker runtime `kata-runtime`, runs `kata-runtime check`, and adds `meta { blob_kata = "true" }` to the Nomad client config.
+4. Nomad (latest stable) from `apt.releases.hashicorp.com`. Configures it as a single-node server-and-client at `/etc/nomad.d/blob.hcl`, data dir `/opt/nomad/data`. Enables and starts both `docker` and `nomad`.
+5. UFW: opens 22/80/443 inbound only. **Note:** managed-service ports (Loki, Grafana, Tempo, Prometheus, NATS) are NOT opened here. See the [observability doc](observability.md#ufw) for the rules to add before running `blob loki create` etc. — the docker bridge needs `from 172.17.0.0/16` allowed on the relevant port ranges.
+6. Generates the registry htpasswd at `/etc/blob/registry.htpasswd` and the matching plaintext credentials at `/etc/blob/registry-credentials.txt`.
+7. Submits a `traefik:v3.6` Nomad job listening on host ports 80/443 with ACME via HTTP-01, providers.nomad enabled.
+8. Submits a `registry:2` Nomad job under `registry.$BASE_DOMAIN` reading the htpasswd from step 6.
 
 After it runs, the only file you'll need to hand-copy is the credentials file (the rest of step 3 below).
 
@@ -133,6 +143,27 @@ blob doctor            # expects: 5 checks, no issues
 
 Now `blob deploy` from any project folder works.
 
+## Kata microVM workloads
+
+Set `isolation: kata` in `blob.yaml`, or deploy a single-component app with `blob deploy --isolation kata`. Blob renders the Nomad job with Docker runtime `kata-runtime` and a `blob_kata=true` node constraint, so the workload only lands on nodes bootstrapped with `ENABLE_KATA=1`.
+
+```yaml
+name: isolated-api
+form: web-service
+port: 8080
+isolation: kata
+```
+
+Verify a host before scheduling Kata apps:
+
+```sh
+sudo test -e /dev/kvm
+sudo docker run --rm --runtime kata-runtime hello-world
+nomad node status -verbose | grep 'blob_kata = true'
+```
+
+If no eligible Kata node exists, Nomad leaves the allocation pending instead of falling back to the normal Docker runtime.
+
 ## Before you run `blob loki create` (or any managed service)
 
 `bootstrap-host.sh` only opens 22/80/443 in UFW. Every managed-service driver (Loki, Grafana, Tempo, Prometheus, NATS) listens on a port range above 13000 and needs the docker bridge to reach it. Apply the rules in [`docs/observability.md#ufw`](observability.md) before creating any of them, or `blob loki create` will succeed in scheduling Nomad's job but the data plane will be unreachable from the rest of the fleet.
@@ -154,7 +185,7 @@ Now `blob deploy` from any project folder works.
 | `core`       | Pi 4 4 GiB / VPS   | personal projects, small team         |
 | `full`       | 3+ nodes, 8 GiB+   | production with managed services      |
 
-`bootstrap-host.sh` defaults to `core`. Set `BLOB_PROFILE=ultralight` to skip the registry-on-Nomad step (use a public registry instead) and reduce RAM usage.
+`bootstrap-host.sh` defaults to `core`. Set `PROFILE=ultralight` to skip the registry-on-Nomad step (use a public registry instead) and reduce RAM usage.
 
 ## Next
 

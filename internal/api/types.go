@@ -12,6 +12,7 @@ type DeployRequest struct {
 	Port        int               `json:"port,omitempty"`
 	Tag         string            `json:"tag,omitempty"`
 	Command     []string          `json:"command,omitempty"`
+	Isolation   string            `json:"isolation,omitempty"` // docker | kata
 	CPU         int               `json:"cpu,omitempty"`
 	Memory      int               `json:"memory,omitempty"`
 	Replicas    int               `json:"replicas,omitempty"`
@@ -90,6 +91,7 @@ type AppSummary struct {
 	URL         string    `json:"url"`
 	Status      string    `json:"status"`
 	Form        string    `json:"form"`
+	Isolation   string    `json:"isolation,omitempty"`
 	Replicas    int       `json:"replicas"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
