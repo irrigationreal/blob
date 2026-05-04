@@ -374,6 +374,7 @@ func (s *Server) resolveServices(req *api.DeployRequest) error {
 	natsPrimary := true
 	tempoPrimary := true
 	prometheusPrimary := true
+	storagePrimary := true
 	for _, svc := range req.Services {
 		// Try project binding first ("instance.project").
 		if instance, project := parseProjectBinding(svc); project != "" {
@@ -451,6 +452,9 @@ func (s *Server) resolveServices(req *api.DeployRequest) error {
 			continue
 		}
 		if s.lookupPrometheusForBinding(svc, req.Env, &prometheusPrimary) {
+			continue
+		}
+		if s.lookupStorageForBinding(svc, req.Env, &storagePrimary) {
 			continue
 		}
 		return fmt.Errorf("service %q not found", svc)

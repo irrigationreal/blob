@@ -145,6 +145,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/v1/autoscale", s.handleAutoscale)
 	mux.HandleFunc("/v1/autoscale/", s.handleAutoscaleItem)
 	mux.HandleFunc("/v1/services", s.handleServices)
+	mux.HandleFunc("/v1/storage", s.handleStorage)
+	mux.HandleFunc("/v1/storage/", s.handleStorageItem)
 	mux.HandleFunc("/v1/webhooks/setup/", s.handleWebhookSetup)
 	mux.HandleFunc("/v1/webhooks/github", s.handleWebhookGitHub)
 	mux.Handle("/metrics", promhttp.Handler())

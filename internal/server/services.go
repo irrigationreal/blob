@@ -98,6 +98,15 @@ func (s *Server) listServices(ctx context.Context) (*api.ListServicesResponse, e
 			})
 		}
 	}
+	if st, err := s.listStorage(ctx); err == nil {
+		for _, m := range st.Storage {
+			out.Services = append(out.Services, api.ServiceSummary{
+				Kind: "storage", Name: m.Name, Status: m.Status, Host: m.Host,
+				Ports: []int{m.APIPort, m.UIPort},
+				URLs:  []string{m.Endpoint, "bucket:" + m.Bucket},
+			})
+		}
+	}
 
 	sort.Slice(out.Services, func(i, j int) bool {
 		if out.Services[i].Kind != out.Services[j].Kind {

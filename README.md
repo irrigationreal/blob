@@ -61,7 +61,8 @@ The same platform host runs these via `blob import compose|procfile|fly` → `bl
 | **Off-host backup shipping** to S3-compatible stores + scheduled cron + retention | shipped  |
 | **Observability**: managed Loki + Grafana + Promtail; `blob logs --since/--grep/--follow` queries Loki when registered, falls back to nomad alloc tail | shipped  |
 | **Importers**: `blob import compose|procfile|fly|nextjs|netlify` translate third-party manifests to blob.yaml; `blob deploy --from <kind> <path>` does both in one shot | shipped  |
-| **Preview environments**: `blob preview create <app> --branch <name>` for ephemeral per-branch deploys at `<app>-<branch>.<base>` | shipped  |
+| **Preview environments**: `blob preview create <app> --branch <name>` for ephemeral per-branch deploys at `<app>-<branch>.<base>`; multi-component preview ships in v0.13; GitHub webhook auto-create on PR open/synchronize/close in v0.13 | shipped  |
+| **Object storage**: managed S3-compatible (`blob storage create <name>`); `services: [<storage>]` injects S3_ENDPOINT/S3_BUCKET/S3_ACCESS_KEY/S3_SECRET_KEY (+ AWS_* aliases) | shipped  |
 | **Messaging**: managed NATS with JetStream (`services: [<nats>]` injects NATS_URL) | shipped  |
 | **Tracing**: managed Tempo (OTLP gRPC); blobd auto-exports deploy spans when a Tempo is registered; Grafana provisioned with Tempo datasource | shipped  |
 | **Metrics**: managed Prometheus + Nomad service discovery + blobd /metrics; Grafana provisioned with Prometheus datasource | shipped  |
@@ -93,7 +94,7 @@ The full v1 spec ([`docs/the-blob-spec.md`](docs/the-blob-spec.md)) is the desti
 - **Preview-environment webhooks** (HMAC-signed receivers that auto-create/destroy on PR open/close — manual `blob preview` is shipped)
 - **Status pages**, cost rollups, plugins, web console, GPU/confidential compute
 - Importers beyond compose/procfile/fly/nextjs/netlify: Helm, Render, Vercel, Nix flakes
-- Other managed services: NATS, ScyllaDB, ClickHouse
+- Other managed services: ScyllaDB, ClickHouse
 
 ## Setting up your own Blob
 

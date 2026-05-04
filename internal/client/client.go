@@ -679,3 +679,41 @@ func (c *Client) GetGitHubWebhook(ctx context.Context, app string) (*api.Webhook
 func (c *Client) RemoveGitHubWebhook(ctx context.Context, app string) error {
 	return c.do(ctx, "DELETE", "/v1/webhooks/setup/github/"+url.PathEscape(app), nil, nil)
 }
+
+// --- Storage (v0.14) ---
+
+func (c *Client) ListStorage(ctx context.Context) (*api.ListStorageResponse, error) {
+	out := &api.ListStorageResponse{}
+	if err := c.do(ctx, "GET", "/v1/storage", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) CreateStorage(ctx context.Context, req *api.CreateStorageRequest) (*api.Storage, error) {
+	out := &api.Storage{}
+	if err := c.do(ctx, "POST", "/v1/storage", req, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) GetStorage(ctx context.Context, name string) (*api.Storage, error) {
+	out := &api.Storage{}
+	if err := c.do(ctx, "GET", "/v1/storage/"+url.PathEscape(name), nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) StorageURL(ctx context.Context, name string) (*api.StorageURL, error) {
+	out := &api.StorageURL{}
+	if err := c.do(ctx, "GET", "/v1/storage/"+url.PathEscape(name)+"/url", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) DestroyStorage(ctx context.Context, name string) error {
+	return c.do(ctx, "DELETE", "/v1/storage/"+url.PathEscape(name), nil, nil)
+}

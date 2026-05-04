@@ -442,3 +442,47 @@ JetStream data persists on the Docker named volume `blob-nats-<name>` mounted at
 ### Verified pub/sub round-trip
 
 The `~/code/blob-dogfood/blob-nats-demo/` app deploys with `services: [platform-nats]`, receives `NATS_URL`, subscribes to `blob.demo.>`, and publishes a tick every 5s. `curl https://blob-nats-demo.irrigate.cc/` returns `{"received":N,"lastReceived":"tick-<ms>"}` confirming the pub→sub round-trip lands in the same NATS instance.
+
+## Object storage (v0.14): managed S3-compatible
+
+Single-node MinIO with one auto-provisioned bucket per instance. Apps bind via `services: [<name>]` and receive a full S3-style env block.
+
+```sh
+blob storage create assets                     # creates instance + bucket named "assets"
+blob storage create user-uploads --bucket prod-uploads --version RELEASE.2025-04-08T15-41-24Z
+blob storage url assets                        # prints endpoint + bucket + keys + console URL
+blob storage list
+blob storage destroy assets                    # Docker volume blob-storage-assets preserved
+```
+
+Env injected into bound apps (first storage binding wins the canonical slot):
+
+```
+S3_ENDPOINT          http://<host>:<api-port>
+S3_BUCKET            <bucket>
+S3_ACCESS_KEY        blob-<instance>
+S3_SECRET_KEY        <random-48-char-hex>
+S3_REGION            us-east-1
+S3_USE_PATH_STYLE    true
+
+# AWS-SDK-conventional aliases (so default SDK env works without remapping)
+AWS_ACCESS_KEY_ID
+AWS_SECRET_ACCESS_KEY
+AWS_REGION
+AWS_ENDPOINT_URL_S3
+```
+
+For two storage bindings, the second instance's env is name-prefixed: `<NAME>_ENDPOINT`, `<NAME>_BUCKET`, `<NAME>_ACCESS_KEY`, `<NAME>_SECRET_KEY`.
+
+API port pool 14500–14598 (paired API/UI). Docker bridge needs `ufw allow 14500:14600/tcp` to reach the data plane from app containers.
+
+The bucket is auto-created via `mc mb --ignore-existing` in a one-off `minio/mc:latest` container right after the MinIO instance comes up. If that step fails (e.g. no docker daemon access), the instance is still live; create the bucket manually:
+
+```sh
+docker run --rm --network host minio/mc:latest sh -c \
+  'mc alias set s http://<host>:<api-port> blob-<instance> <secret-key> && mc mb s/<bucket>'
+```
+
+### Verified live (v0.14 ship)
+
+A two-component blob app with one component bound to `services: [assets]` writes a sentinel file via the AWS SDK and reads it back from another route. Round-trip lands in MinIO; the same file is visible via `mc ls s/assets`.

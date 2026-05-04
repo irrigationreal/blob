@@ -6,7 +6,7 @@ The result: your `blob deploy` from a laptop produces `https://<name>.<your-doma
 
 ## What you need
 
-- A Debian 12 / Ubuntu 22+ host with a public IP. 4 GiB RAM is enough; 2 GiB works for very small fleets.
+- A Debian 12 / Ubuntu 22+ host with a public IP. 4 GiB RAM is enough; 2 GiB works for very small fleets. **Must run systemd as PID 1** (any real VM, bare metal, or Hetzner-style VPS does; bare Docker/LXC containers without `--init` do not — `bootstrap-host.sh`'s `systemctl enable --now` calls fail with "System has not been booted with systemd").
 - DNS: a wildcard A/AAAA record `*.<base-domain>` AND the apex `<base-domain>` both pointing at the host's public IP. The wildcard is for **subdomain coverage** (every app you deploy lands at `<app>.<base-domain>`); it is NOT a wildcard cert. Let's Encrypt HTTP-01 (which is what `bootstrap-host.sh` uses) issues a fresh per-subdomain cert at first request — that works for `<app>.<base>` but cannot issue `*.<base>`.
 - Ports 22 (SSH), 80 (HTTP), 443 (HTTPS), and 8787 (the API, optional if you proxy it) reachable.
 - Root or passwordless sudo on the host.

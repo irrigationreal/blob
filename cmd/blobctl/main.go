@@ -118,6 +118,11 @@ Usage:
   blob webhook github get <app>
   blob webhook github remove <app>
 
+  blob storage list
+  blob storage create <name> [--bucket B] [--version V]
+  blob storage url <name>                         Print endpoint + bucket + keys + console URL
+  blob storage destroy <name> [--yes]
+
   blob autoscale list
   blob autoscale set <app> --min N --max M --metric cpu|memory|http_qps --target P
                                                   [--cooldown-up 60s] [--cooldown-down 180s]
@@ -128,7 +133,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.13.1"
+var version = "0.14.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -210,6 +215,8 @@ func main() {
 		cmdPreview(args)
 	case "webhook":
 		cmdWebhook(args)
+	case "storage":
+		cmdStorage(args)
 	case "doctor":
 		cmdDoctor()
 	case "whoami":
@@ -2249,5 +2256,90 @@ func cmdWebhook(args []string) {
 		fmt.Printf("removed github webhook for %s\n", app)
 	default:
 		die("unknown webhook subcommand: %s", sub)
+	}
+}
+
+// --- managed services: storage (v0.14) ---
+
+func cmdStorage(args []string) {
+	if len(args) == 0 {
+		die("usage: blob storage <list|create|url|destroy> ...")
+	}
+	c := mustClient()
+	switch args[0] {
+	case "list", "ls":
+		out, err := c.ListStorage(context.Background())
+		if err != nil {
+			die("%v", err)
+		}
+		if len(out.Storage) == 0 {
+			fmt.Println("no storage instances")
+			return
+		}
+		fmt.Printf("%-20s %-10s %-22s %-8s %-12s %s\n", "NAME", "STATUS", "ENDPOINT", "API:UI", "BUCKET", "VERSION")
+		for _, s := range out.Storage {
+			fmt.Printf("%-20s %-10s %-22s %-8s %-12s %s\n",
+				s.Name, s.Status, s.Endpoint,
+				fmt.Sprintf("%d:%d", s.APIPort, s.UIPort),
+				s.Bucket, s.Version)
+		}
+	case "create":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob storage create <name> [--bucket B] [--version V]")
+		}
+		req := &api.CreateStorageRequest{
+			Name:    name,
+			Bucket:  flags["bucket"],
+			Version: flags["version"],
+		}
+		fmt.Printf("creating storage %q...\n", name)
+		t0 := time.Now()
+		out, err := c.CreateStorage(context.Background(), req)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("ready in %s\n", time.Since(t0).Round(100*time.Millisecond))
+		fmt.Printf("  name:     %s\n", out.Name)
+		fmt.Printf("  endpoint: %s\n", out.Endpoint)
+		fmt.Printf("  bucket:   %s\n", out.Bucket)
+		fmt.Printf("  console:  http://%s:%d\n", out.Host, out.UIPort)
+		fmt.Println()
+		fmt.Printf("To bind apps, add to blob.yaml:\n  services:\n    - %s\n", out.Name)
+		fmt.Printf("Apps will receive S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY,\n")
+		fmt.Printf("S3_REGION, S3_USE_PATH_STYLE plus the AWS_* aliases.\n")
+	case "url":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob storage url <name>")
+		}
+		u, err := c.StorageURL(context.Background(), name)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("endpoint:  %s\nbucket:    %s\naccess_key: %s\nsecret_key: %s\nconsole:   %s\n",
+			u.Endpoint, u.Bucket, u.AccessKey, u.SecretKey, u.Console)
+	case "destroy", "rm":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob storage destroy <name>")
+		}
+		if flags["yes"] != "true" {
+			fmt.Printf("destroy storage %q? (Docker volume blob-storage-%s preserved; type the name to confirm) ", name, name)
+			var line string
+			fmt.Fscanln(os.Stdin, &line)
+			if line != name {
+				die("aborted")
+			}
+		}
+		if err := c.DestroyStorage(context.Background(), name); err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("destroyed storage %q (Docker volume blob-storage-%s preserved)\n", name, name)
+	default:
+		die("unknown storage subcommand: %s", args[0])
 	}
 }

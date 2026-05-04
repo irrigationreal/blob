@@ -610,3 +610,37 @@ type WebhookSetupResponse struct {
 	URL    string `json:"url"`
 	Secret string `json:"secret"`
 }
+
+// Managed services — Storage (v0.14 object storage)
+type Storage struct {
+	Name      string    `json:"name"`
+	Version   string    `json:"version"`
+	Host      string    `json:"host"`
+	APIPort   int       `json:"api_port"`
+	UIPort    int       `json:"ui_port"`
+	Endpoint  string    `json:"endpoint"`
+	Bucket    string    `json:"bucket"`
+	JobID     string    `json:"job_id"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type CreateStorageRequest struct {
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"`
+	CPU     int    `json:"cpu,omitempty"`
+	Memory  int    `json:"memory,omitempty"`
+	Bucket  string `json:"bucket,omitempty"` // default: same as Name
+}
+
+type ListStorageResponse struct {
+	Storage []Storage `json:"storage"`
+}
+
+type StorageURL struct {
+	Endpoint  string `json:"endpoint"`
+	Bucket    string `json:"bucket"`
+	AccessKey string `json:"access_key"`
+	SecretKey string `json:"secret_key"`
+	Console   string `json:"console"`
+}
