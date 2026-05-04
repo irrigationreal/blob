@@ -9,7 +9,7 @@ import (
 )
 
 // renderJob writes an HCL Nomad job for a single Component (DeployRequest).
-// Supports forms: web-service, daemon, job (batch), cronjob (periodic batch).
+// Supports forms: web-service, function, daemon, job (batch), cronjob (periodic batch).
 // Bundles are expressed as a single group with one primary task plus sidecars.
 func renderJob(req *api.DeployRequest, image string, port int, domain, dc string, namespacedID string) string {
 	normalizeDeployRequestForRender(req)
@@ -27,7 +27,7 @@ func renderJob(req *api.DeployRequest, image string, port int, domain, dc string
 		return renderBatch(namespacedID, dc, image, req, envBlock, volumeBlocks, volumeMounts, sidecars, true, req.Schedule)
 	case "daemon":
 		return renderDaemon(namespacedID, dc, image, req, envBlock, volumeBlocks, volumeMounts, sidecars)
-	case "static":
+	case "static", "function":
 		return renderWebService(namespacedID, dc, image, port, domain, req, envBlock, volumeBlocks, volumeMounts, sidecars)
 	default: // web-service
 		return renderWebService(namespacedID, dc, image, port, domain, req, envBlock, volumeBlocks, volumeMounts, sidecars)
@@ -36,10 +36,18 @@ func renderJob(req *api.DeployRequest, image string, port int, domain, dc string
 
 func normalizeDeployRequestForRender(req *api.DeployRequest) {
 	if req.CPU <= 0 {
-		req.CPU = 500
+		if req.Form == "function" {
+			req.CPU = 100
+		} else {
+			req.CPU = 500
+		}
 	}
 	if req.Memory <= 0 {
-		req.Memory = 512
+		if req.Form == "function" {
+			req.Memory = 128
+		} else {
+			req.Memory = 512
+		}
 	}
 	if req.Replicas <= 0 {
 		req.Replicas = 1

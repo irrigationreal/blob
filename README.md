@@ -52,7 +52,7 @@ The same platform host runs these via `blob import compose|procfile|fly` → `bl
 | One-command deploy from any folder                             | shipped  |
 | **Auto-detect** Dockerfile / Compose / `index.html` / build script | shipped  |
 | **Static sites** via `form: static` (Caddy serves a folder)    | shipped  |
-| `web-service`, `daemon`, `job`, `cronjob` workload forms       | shipped  |
+| `web-service`, `function`, `daemon`, `job`, `cronjob` workload forms | shipped  |
 | **Kata microVM isolation** via `isolation: kata` or `blob deploy --isolation kata` on nodes bootstrapped with `ENABLE_KATA=1` | shipped |
 | Multi-component **App** manifest (web + worker + cron)         | shipped  |
 | **Bundle** sidecars (co-scheduled tasks sharing the netns)     | shipped  |
@@ -116,6 +116,7 @@ Three short docs:
 - **[`docs/audit.md`](docs/audit.md)** — append-only hash-chained audit log for authenticated write actions.
 - **[`docs/identity.md`](docs/identity.md)** — scoped service tokens and grants for automation.
 - **[`docs/plugins.md`](docs/plugins.md)** — per-app deploy hooks for build/deploy automation.
+- **[`docs/functions.md`](docs/functions.md)** — HTTP function handlers with generated Node.js wrapper images.
 - **[`docs/rollback.md`](docs/rollback.md)** — first-class app rollback without Nomad drift.
 - **[`docs/costs.md`](docs/costs.md)** — resource accounting and optional monthly cost rollups.
 - **[`docs/web-console.md`](docs/web-console.md)** — server-rendered authenticated operator UI at `/ui`.
@@ -162,6 +163,17 @@ volumes:
   - name: data
     path: /var/lib/hello
 ```
+
+### Function
+
+```yaml
+name: hello-fn
+form: function
+handler: index.mjs # default auto-detects index.mjs/index.js/function.mjs/function.js
+runtime: nodejs
+```
+
+The handler exports `default` or `handler` and receives an HTTP event with `method`, `path`, `query`, `headers`, `body`, and `rawBody`. Blob wraps it in a tiny Node HTTP server on port 8080 and publishes the same HTTPS route as a web service.
 
 ### Cronjob
 
@@ -219,6 +231,7 @@ blob init [--name N] [--port P] [--domain D] [--form F] [--root D]
 blob import <compose|procfile|fly|nextjs|netlify|render|vercel|nix|helm|kubernetes> <path>
 blob login --endpoint URL [--token T]
 blob deploy [--name N] [--port P] [--domain D] [--image IMG] [--env ENV] [--cpu C] [--memory M] [--replicas N]
+blob deploy --function [--handler FILE]
 blob deploy --from <compose|procfile|fly|nextjs|netlify|render|vercel|nix|helm|kubernetes> <path>
 blob list
 blob status <app>

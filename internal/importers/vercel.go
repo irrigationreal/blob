@@ -206,7 +206,7 @@ func vercelWarnings(cfg vercelConfig) []string {
 		warnings = append(warnings, fmt.Sprintf("%d headers dropped - set them in the app or edge config", len(cfg.Headers)))
 	}
 	if len(cfg.Functions) > 0 {
-		warnings = append(warnings, "Vercel functions are not portable to Blob static hosting; move backend code into a web-service")
+		warnings = append(warnings, "Vercel functions were not auto-translated; move backend code into form:function or a web-service")
 	}
 	if len(cfg.Crons) > 0 {
 		warnings = append(warnings, "Vercel crons dropped - recreate them with `blob jobs schedule`")

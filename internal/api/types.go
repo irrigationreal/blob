@@ -2,7 +2,7 @@ package api
 
 import "time"
 
-// DeployRequest covers single-component deploys (web-service, daemon, job, cronjob).
+// DeployRequest covers single-component deploys (web-service, daemon, job, cronjob, function).
 // Multi-component apps are sent through DeployAppRequest.
 type DeployRequest struct {
 	App         string            `json:"app"`
@@ -19,7 +19,7 @@ type DeployRequest struct {
 	Env         map[string]string `json:"env,omitempty"`
 	Secrets     []SecretBinding   `json:"secrets,omitempty"`
 	Services    []string          `json:"services,omitempty"` // names of managed services to bind (e.g. ["my-pg"])
-	Form        string            `json:"form,omitempty"`     // web-service | daemon | job | cronjob | static
+	Form        string            `json:"form,omitempty"`     // web-service | daemon | job | cronjob | static | function
 	Schedule    string            `json:"schedule,omitempty"` // cron expression for cronjob
 	Volumes     []VolumeMount     `json:"volumes,omitempty"`
 	Sidecars    []Sidecar         `json:"sidecars,omitempty"`
@@ -30,6 +30,9 @@ type DeployRequest struct {
 	Index    string `json:"index,omitempty"`
 	NotFound string `json:"not_found,omitempty"`
 	SPA      bool   `json:"spa,omitempty"`
+
+	Runtime string `json:"runtime,omitempty"`
+	Handler string `json:"handler,omitempty"`
 
 	// ProjectionHash is server-owned. blobd writes it into Nomad job metadata
 	// and sidecar .meta.json files so doctor can detect out-of-band drift.

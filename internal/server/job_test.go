@@ -27,6 +27,22 @@ func TestRenderJobWebService(t *testing.T) {
 	}
 }
 
+func TestRenderJobFunctionUsesWebRoute(t *testing.T) {
+	req := &api.DeployRequest{App: "fn", Form: "function", Replicas: 1}
+	job := renderJob(req, "registry.example/fn:1", 8080, "fn.example.com", "dc1", "fn")
+	for _, want := range []string{
+		`type = "service"`,
+		"Host(`fn.example.com`)",
+		`to = 8080`,
+		`cpu    = 100`,
+		`memory = 128`,
+	} {
+		if !strings.Contains(job, want) {
+			t.Fatalf("function job missing %q:\n%s", want, job)
+		}
+	}
+}
+
 func TestRenderJobDaemonHasNoTraefikTags(t *testing.T) {
 	req := &api.DeployRequest{App: "worker", Form: "daemon", CPU: 100, Memory: 128, Replicas: 1}
 	job := renderJob(req, "img:1", 0, "", "dc1", "worker")
@@ -131,6 +147,12 @@ func TestProjectionHashChangesWithManifestProjection(t *testing.T) {
 	b := hashJobProjection(req, "img:1", 8080, "hello.example.com", "dc1", "hello")
 	if a == b {
 		t.Fatal("projection hash did not change when memory changed")
+	}
+	req.Form = "function"
+	req.Handler = "index.mjs"
+	c := hashJobProjection(req, "img:1", 8080, "hello.example.com", "dc1", "hello")
+	if b == c {
+		t.Fatal("projection hash did not change when function handler changed")
 	}
 }
 

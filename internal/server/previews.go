@@ -168,10 +168,10 @@ func (s *Server) createPreview(ctx context.Context, app, branch string) (*api.Pr
 	// fallback path) deploy one job named <app>-<branch>. App manifests
 	// with N components deploy N jobs named <app>-<branch>-<component>.
 	type compToDeploy struct {
-		name     string // component name; empty means "this is the single-component case"
-		jobID    string
-		domain   string
-		req      *api.DeployRequest
+		name   string // component name; empty means "this is the single-component case"
+		jobID  string
+		domain string
+		req    *api.DeployRequest
 	}
 	var plan []compToDeploy
 	mkReq := func(c manifest.Component, jobID, domain string) *api.DeployRequest {
@@ -217,6 +217,12 @@ func (s *Server) createPreview(ctx context.Context, app, branch string) (*api.Pr
 		}
 		if c.Build != "" {
 			req.Build = c.Build
+		}
+		if c.Runtime != "" {
+			req.Runtime = c.Runtime
+		}
+		if c.Handler != "" {
+			req.Handler = c.Handler
 		}
 		return req
 	}

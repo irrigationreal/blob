@@ -12,18 +12,22 @@ import (
 
 // Netlify parses a netlify.toml at path and returns a blob.yaml shaped
 // for the existing static-site deploy path. `path` may be either:
+//
 //   - the explicit netlify.toml file, or
+//
 //   - a directory containing a netlify.toml.
 //
 //   - [build] command  → blob.yaml `build:`
+//
 //   - [build] publish  → blob.yaml `root:` (the directory served by Caddy)
+//
 //   - [build.environment] → env: map
 //
 // Things we explicitly drop with a warning:
 //   - [[redirects]] / [[headers]] — Caddy config differs; emit a TODO so
 //     the operator can hand-translate
-//   - [functions] — Netlify edge functions are out of scope this ship
-//     (deferred to v0.13)
+//   - [functions] — Netlify function layout is not auto-translated; move
+//     handlers into form:function explicitly
 //   - [[plugins]] — build plugins; not portable to the blobd build path
 func Netlify(path string) (*Result, error) {
 	// Accept a directory: look for netlify.toml inside.
@@ -78,7 +82,7 @@ func Netlify(path string) (*Result, error) {
 	}
 	if nt.Functions.Directory != "" || len(nt.EdgeFunctions) > 0 {
 		res.Warnings = append(res.Warnings,
-			"netlify functions / edge functions are not yet supported (planned for v0.13). The static publish dir was imported; backend code was not.")
+			"netlify functions / edge functions were not auto-translated; move backend handlers into form:function or a web-service.")
 	}
 	if len(nt.Plugins) > 0 {
 		res.Warnings = append(res.Warnings,
@@ -100,9 +104,9 @@ type netlifyToml struct {
 		Publish     string            `toml:"publish"`
 		Environment map[string]string `toml:"environment"`
 	} `toml:"build"`
-	Redirects     []map[string]any `toml:"redirects"`
-	Headers       []map[string]any `toml:"headers"`
-	Functions     struct {
+	Redirects []map[string]any `toml:"redirects"`
+	Headers   []map[string]any `toml:"headers"`
+	Functions struct {
 		Directory string `toml:"directory"`
 	} `toml:"functions"`
 	EdgeFunctions []map[string]any `toml:"edge_functions"`

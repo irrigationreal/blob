@@ -39,6 +39,8 @@ type jobProjection struct {
 	Index      string            `json:"index,omitempty"`
 	NotFound   string            `json:"not_found,omitempty"`
 	SPA        bool              `json:"spa,omitempty"`
+	Runtime    string            `json:"runtime,omitempty"`
+	Handler    string            `json:"handler,omitempty"`
 }
 
 func projectionHashFromJobFile(hcl string) string {
@@ -81,6 +83,8 @@ func hashJobProjection(req *api.DeployRequest, image string, port int, domain, d
 		Index:      req.Index,
 		NotFound:   req.NotFound,
 		SPA:        req.SPA,
+		Runtime:    req.Runtime,
+		Handler:    req.Handler,
 	}
 	if p.Form == "" {
 		p.Form = "web-service"

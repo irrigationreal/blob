@@ -42,6 +42,7 @@ Usage:
   blob deploy --isolation kata                    Run the workload with Kata microVM isolation
   blob deploy --static [--root DIR]               Force static-site form (else auto-detected
                                                   from index.html when no blob.yaml exists)
+  blob deploy --function [--handler FILE]         Deploy an HTTP function (Node.js handler)
   blob deploy --from <kind> <path>                Import then deploy in one shot
   blob list                                       List apps
   blob status <app>                               Show one app
@@ -205,7 +206,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.38.0"
+var version = "0.39.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -392,6 +393,15 @@ func cmdInit(args []string) {
 	if v := flags["root"]; v != "" {
 		c.Root = v
 	}
+	if flags["function"] == "true" {
+		c.Form = "function"
+	}
+	if v := flags["handler"]; v != "" {
+		c.Handler = v
+	}
+	if v := flags["runtime"]; v != "" {
+		c.Runtime = v
+	}
 	m := &manifest.Manifest{Component: *c}
 	if err := m.Validate(); err != nil {
 		die("%v", err)
@@ -569,6 +579,8 @@ func componentToReq(app string, c *manifest.Component, env string) *api.DeployRe
 		Index:       c.Index,
 		NotFound:    c.NotFound,
 		SPA:         c.SPA,
+		Runtime:     c.Runtime,
+		Handler:     c.Handler,
 	}
 	if app == "" {
 		r.App = c.Name
@@ -684,6 +696,15 @@ func cmdDeploy(args []string) {
 	}
 	if v := flags["form"]; v != "" {
 		m.Form = v
+	}
+	if flags["function"] == "true" {
+		m.Form = "function"
+	}
+	if v := flags["handler"]; v != "" {
+		m.Handler = v
+	}
+	if v := flags["runtime"]; v != "" {
+		m.Runtime = v
 	}
 	if v := flags["isolation"]; v != "" {
 		m.Isolation = v

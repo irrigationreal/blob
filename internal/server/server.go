@@ -254,6 +254,14 @@ var envRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`)
 
 func validName(s string) bool { return nameRE.MatchString(s) }
 func validEnv(s string) bool  { return s == "" || envRE.MatchString(s) }
+func validDeployForm(s string) bool {
+	switch strings.TrimSpace(s) {
+	case "", "web-service", "daemon", "job", "cronjob", "static", "function":
+		return true
+	default:
+		return false
+	}
+}
 func validIsolation(s string) bool {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "", "docker", "kata":
@@ -378,6 +386,10 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "invalid isolation")
 		return
 	}
+	if !validDeployForm(req.Form) {
+		writeErr(w, 400, "invalid form")
+		return
+	}
 	src := filepath.Join(s.cfg.SourcesDir, req.App)
 	if _, err := os.Stat(src); err != nil {
 		writeErr(w, 400, "no source uploaded for "+req.App)
@@ -422,6 +434,10 @@ func (s *Server) handleDeployImage(w http.ResponseWriter, r *http.Request) {
 	}
 	if !validEnv(req.Environment) {
 		writeErr(w, 400, "invalid environment")
+		return
+	}
+	if !validDeployForm(req.Form) {
+		writeErr(w, 400, "invalid form")
 		return
 	}
 	if req.Tag == "" {
@@ -487,6 +503,14 @@ func (s *Server) handleDeployApp(w http.ResponseWriter, r *http.Request) {
 		}
 		if !validName(c.App) {
 			writeErr(w, 400, "component name invalid: "+c.App)
+			return
+		}
+		if !validDeployForm(c.Form) {
+			writeErr(w, 400, "component form invalid: "+c.Form)
+			return
+		}
+		if !validIsolation(c.Isolation) {
+			writeErr(w, 400, "component isolation invalid: "+c.Isolation)
 			return
 		}
 		var cdr *api.DeployResponse
@@ -731,8 +755,12 @@ func (s *Server) deployFromSource(ctx context.Context, src string, req *api.Depl
 	return out, nil
 }
 
-func isHTTPForm(form string) bool     { return form == "web-service" || form == "static" }
-func isLongRunningForm(f string) bool { return f == "web-service" || f == "daemon" || f == "static" }
+func isHTTPForm(form string) bool {
+	return form == "web-service" || form == "static" || form == "function"
+}
+func isLongRunningForm(f string) bool {
+	return f == "web-service" || f == "daemon" || f == "static" || f == "function"
+}
 
 func (s *Server) deployImage(ctx context.Context, req *api.DeployRequest, sourceApp string) (*api.DeployResponse, error) {
 	out := &api.DeployResponse{App: req.App, Environment: req.Environment, StartedAt: time.Now()}
@@ -740,6 +768,9 @@ func (s *Server) deployImage(ctx context.Context, req *api.DeployRequest, source
 	form := req.Form
 	if form == "" {
 		form = "web-service"
+	}
+	if form == "function" && req.Port == 0 {
+		req.Port = 8080
 	}
 	domain := req.Domain
 	if isHTTPForm(form) {
@@ -894,6 +925,16 @@ func (s *Server) buildSource(ctx context.Context, src, image string, portArg int
 			return br, err
 		}
 		if err := s.run(ctx, "docker", "build", "-t", image, "-f", filepath.Join(src, "Dockerfile.blob-static"), src); err != nil {
+			return br, err
+		}
+		br.Port = 8080
+		return br, nil
+	}
+	if req != nil && req.Form == "function" {
+		if err := s.prepareFunctionBuild(ctx, src, req); err != nil {
+			return br, err
+		}
+		if err := s.run(ctx, "docker", "build", "-t", image, "-f", filepath.Join(src, "Dockerfile.blob-function"), src); err != nil {
 			return br, err
 		}
 		br.Port = 8080

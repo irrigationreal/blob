@@ -1,6 +1,6 @@
 ---
 name: blob
-description: Deploy the current folder to The Blob - a self-hosted Fly.io-style platform. Use this skill when the user says "deploy this", "ship this", "blob this", or asks to put a project online. Wraps `blobctl` (the CLI) and produces a working public HTTPS URL from Dockerfile, Compose, static, Render, Vercel, Nix flake, Helm chart, or blob.yaml projects.
+description: Deploy the current folder to The Blob - a self-hosted Fly.io-style platform. Use this skill when the user says "deploy this", "ship this", "blob this", or asks to put a project online. Wraps `blobctl` (the CLI) and produces a working public HTTPS URL from Dockerfile, Compose, static, function, Render, Vercel, Nix flake, Helm chart, Kubernetes manifest, or blob.yaml projects.
 ---
 
 # The Blob - `/blob` skill
@@ -28,7 +28,7 @@ If `blob whoami` fails, walk the user through `blob login` first.
 ## Deploy flow
 
 1. Make sure you're in the project root: `pwd` should show the folder containing the deploy manifest or app files.
-2. If there's no `blob.yaml` and a third-party manifest exists, run `blob import <compose|procfile|fly|nextjs|netlify|render|vercel|nix|helm> <path> --yes`. Otherwise run `blob init [--name <slug>] [--port <p>] [--domain <d>]`.
+2. If there's no `blob.yaml` and a third-party manifest exists, run `blob import <compose|procfile|fly|nextjs|netlify|render|vercel|nix|helm|kubernetes> <path> --yes`. Otherwise run `blob init [--name <slug>] [--port <p>] [--domain <d>]`.
 3. Run `blob deploy`. The CLI streams phase timings: registry-login, build, push, schedule, ready.
 4. On success, print the URL the CLI returned. Do NOT make up URLs — only echo what the CLI gave you.
 5. Curl-test the URL (`curl -sSf <url>`) and report the response so the user can see it works.
@@ -54,7 +54,7 @@ Minimal:
 
 ```yaml
 name: <lowercase-slug>
-form: web-service       # or daemon | job | cronjob | static
+form: web-service       # or function | daemon | job | cronjob | static
 port: 8080              # required for web-service unless inferable from compose
 domain: <name>.<base>   # optional; defaults to <name>.<base-domain>
 ```
@@ -63,6 +63,7 @@ domain: <name>.<base>   # optional; defaults to <name>.<base-domain>
 
 - web-service: long-running HTTP server. Needs `port`. Gets a public HTTPS route automatically.
 - static: Caddy-served files from `root`, optionally after `build`.
+- function: Node.js HTTP handler exported from `handler` or auto-detected index/function file. Gets a public HTTPS route automatically.
 - daemon: long-running, no inbound. No port, no domain.
 - job: one-shot.
 - cronjob: needs `schedule` (cron expression).

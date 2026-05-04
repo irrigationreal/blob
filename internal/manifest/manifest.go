@@ -14,7 +14,7 @@ import (
 // Manifest is itself a component plus app-level orchestration (Components).
 type Component struct {
 	Name      string            `yaml:"name,omitempty"`      // optional in single-component manifests; required when used inside Components
-	Form      string            `yaml:"form,omitempty"`      // web-service | daemon | job | cronjob | static
+	Form      string            `yaml:"form,omitempty"`      // web-service | daemon | job | cronjob | static | function
 	Domain    string            `yaml:"domain,omitempty"`    // overrides default <name>.<base>
 	Domains   []string          `yaml:"domains,omitempty"`   // additional hostnames
 	Port      int               `yaml:"port,omitempty"`      // required for web-service unless inferable
@@ -43,6 +43,9 @@ type Component struct {
 	// for the common case `static: dist` or `static: .`. Equivalent to
 	// writing `form: static / root: dist` longhand.
 	Static string `yaml:"static,omitempty"`
+
+	Runtime string `yaml:"runtime,omitempty"` // function runtime; currently nodejs
+	Handler string `yaml:"handler,omitempty"` // function handler file relative to root (default: index.js/mjs)
 }
 
 // Sidecar is a co-scheduled container in the same Nomad group.
@@ -123,7 +126,11 @@ func (c *Component) applyDefaults() {
 		c.Form = "web-service"
 	}
 	if c.CPU == 0 {
-		c.CPU = 500
+		if c.Form == "function" {
+			c.CPU = 100
+		} else {
+			c.CPU = 500
+		}
 	}
 	if c.Memory == 0 {
 		// Default 256 MiB. Most static sites and tiny services fit
@@ -131,7 +138,11 @@ func (c *Component) applyDefaults() {
 		// ~14 default-shaped allocs before Nomad reports
 		// 'Resources exhausted'. Bump per-app via `memory:` in
 		// blob.yaml when you actually need more.
-		c.Memory = 256
+		if c.Form == "function" {
+			c.Memory = 128
+		} else {
+			c.Memory = 256
+		}
 	}
 	if c.Replicas == 0 {
 		c.Replicas = 1
@@ -178,8 +189,8 @@ var envRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`)
 
 func (c *Component) validate() error {
 	switch c.Form {
-	case "web-service", "daemon", "job", "cronjob", "static":
-	case "function", "vm":
+	case "web-service", "daemon", "job", "cronjob", "static", "function":
+	case "vm":
 		return fmt.Errorf("form %q is reserved but not yet implemented", c.Form)
 	default:
 		return fmt.Errorf("unknown form %q", c.Form)

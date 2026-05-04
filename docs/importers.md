@@ -76,7 +76,7 @@ Accepts either a `vercel.json` file or a directory containing one. Static projec
 
 If the project is Next.js and has `next.config.{js,mjs,ts}`, the importer delegates to the Next.js importer so `output: 'standalone'` and `output: 'export'` keep the same behavior as `blob from-nextjs`.
 
-Dropped with warnings: routes, rewrites, redirects, headers, functions, and crons. Recreate cron jobs with `blob jobs schedule`; move serverless functions into a web-service.
+Dropped with warnings: routes, rewrites, redirects, headers, functions, and crons. Recreate cron jobs with `blob jobs schedule`; move serverless functions into `form: function` or a web-service.
 
 ## Nix flakes (`import nix`)
 
@@ -137,7 +137,7 @@ App name is the parent directory's basename, sanitized (lowercase, hyphens). For
 
 - `[[redirects]]` - Caddy/Traefik handle redirects differently. Translate critical ones to a Caddyfile or app-level routes.
 - `[[headers]]` - set custom headers via your origin app or a Traefik middleware.
-- `[functions]` and `[[edge_functions]]` - Netlify functions are not yet supported (planned for v0.13).
+- `[functions]` and `[[edge_functions]]` - Netlify functions are not auto-translated yet; move them into `form: function` handlers.
 - `[[plugins]]` - replicate their effects in the build command if you need them.
 
 ## Compose (`import compose`)
