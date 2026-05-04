@@ -90,6 +90,7 @@ The same platform host runs these via `blob import compose|procfile|fly` → `bl
 | **Identity/RBAC**: scoped service tokens with per-token grants | shipped |
 | **Cost rollups**: `blob costs summary/apps/nodes` reports reserved resources and optional monthly estimates | shipped |
 | **Web console**: server-rendered `/ui` operator views for apps, nodes, costs, doctor, status, audit, and identity | shipped |
+| **Deploy plugins**: per-app pre/post deploy hooks with bounded output and timeout | shipped |
 | **Doctor** drift / orphan / liveness checks                    | shipped  |
 | **Manifest projection hashes**: deploy records intended job projection and `blob doctor` detects live/on-disk drift | shipped |
 | **Bootstrap script** for turning a fresh server into a Blob    | shipped  |
@@ -103,7 +104,7 @@ The full v1 spec ([`docs/the-blob-spec.md`](docs/the-blob-spec.md)) is the desti
 - Blebs warm pool, hot journal volumes, rewind
 - **Tempo/Prometheus**: shipped in v0.10 — see managed services above
 - **Multi-region** active-passive failover
-- Cost rollups, plugins, web console, GPU/confidential compute
+- GPU/confidential compute
 - Importers beyond compose/procfile/fly/nextjs/netlify: Helm, Render, Vercel, Nix flakes
 
 ## Setting up your own Blob
@@ -115,6 +116,7 @@ Three short docs:
 - **[`docs/operator.md`](docs/operator.md)** — day-2 ops: backups, drains, upgrades, recovering from a dead node.
 - **[`docs/audit.md`](docs/audit.md)** — append-only hash-chained audit log for authenticated write actions.
 - **[`docs/identity.md`](docs/identity.md)** — scoped service tokens and grants for automation.
+- **[`docs/plugins.md`](docs/plugins.md)** — per-app deploy hooks for build/deploy automation.
 - **[`docs/costs.md`](docs/costs.md)** — resource accounting and optional monthly cost rollups.
 - **[`docs/web-console.md`](docs/web-console.md)** — server-rendered authenticated operator UI at `/ui`.
 - **[`docs/managed-services.md`](docs/managed-services.md)** — managed Postgres: create, bind apps via `services:`, get the DSN, destroy.

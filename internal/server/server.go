@@ -140,6 +140,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/v1/status-pages", s.handleStatusPages)
 	mux.HandleFunc("/v1/status-pages/", s.handleStatusPagesItem)
 	mux.HandleFunc("/status/", s.handlePublicStatusPage)
+	mux.HandleFunc("/v1/plugins", s.handlePlugins)
+	mux.HandleFunc("/v1/plugins/", s.handlePluginItem)
 	mux.HandleFunc("/v1/costs", s.handleCosts)
 	mux.HandleFunc("/v1/costs/", s.handleCosts)
 	mux.HandleFunc("/v1/nodes", s.handleNodes)
@@ -689,6 +691,12 @@ func (s *Server) deployFromSource(ctx context.Context, src string, req *api.Depl
 	if err := s.resolveServices(req); err != nil {
 		return nil, err
 	}
+	hook := pluginHookContext{JobID: id, Image: br.Image, URL: out.URL}
+	if err := s.recordPhase(out, "plugin-pre", func() error {
+		return s.runDeployHook(ctx, pluginHookPre, req, hook)
+	}); err != nil {
+		return nil, err
+	}
 
 	if err := s.recordPhase(out, "schedule", func() error {
 		return s.scheduleJob(ctx, req, br.Image, br.Port, domain, id)
@@ -702,6 +710,11 @@ func (s *Server) deployFromSource(ctx context.Context, src string, req *api.Depl
 		if err := s.recordPhase(out, "ready", func() error { return s.waitJobRunning(ctx, id, 60*time.Second) }); err != nil {
 			return out, fmt.Errorf("did not become ready: %w", err)
 		}
+	}
+	if err := s.recordPhase(out, "plugin-post", func() error {
+		return s.runDeployHook(ctx, pluginHookPost, req, hook)
+	}); err != nil {
+		return out, err
 	}
 	return out, nil
 }
@@ -765,6 +778,12 @@ func (s *Server) deployImage(ctx context.Context, req *api.DeployRequest, source
 	if err := s.resolveServices(req); err != nil {
 		return nil, err
 	}
+	hook := pluginHookContext{JobID: id, Image: image, URL: out.URL}
+	if err := s.recordPhase(out, "plugin-pre", func() error {
+		return s.runDeployHook(ctx, pluginHookPre, req, hook)
+	}); err != nil {
+		return nil, err
+	}
 	if err := s.recordPhase(out, "schedule", func() error {
 		return s.scheduleJob(ctx, req, image, req.Port, domain, id)
 	}); err != nil {
@@ -775,6 +794,11 @@ func (s *Server) deployImage(ctx context.Context, req *api.DeployRequest, source
 		if err := s.recordPhase(out, "ready", func() error { return s.waitJobRunning(ctx, id, 60*time.Second) }); err != nil {
 			return out, fmt.Errorf("did not become ready: %w", err)
 		}
+	}
+	if err := s.recordPhase(out, "plugin-post", func() error {
+		return s.runDeployHook(ctx, pluginHookPost, req, hook)
+	}); err != nil {
+		return out, err
 	}
 	return out, nil
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/darvell/blob/internal/client"
 	"github.com/darvell/blob/internal/config"
 	"github.com/darvell/blob/internal/detect"
+	"github.com/darvell/blob/internal/display"
 	"github.com/darvell/blob/internal/importers"
 	"github.com/darvell/blob/internal/manifest"
 	"github.com/darvell/blob/internal/tarball"
@@ -84,6 +85,12 @@ Usage:
   blob status-pages list
   blob status-pages show <app>
   blob status-pages disable <app> [--yes]
+
+  blob plugins set <app> [--pre CMD] [--post CMD] [--timeout S]
+  blob plugins list
+  blob plugins show <app>
+  blob plugins enable|disable <app>
+  blob plugins remove <app> [--yes]
 
   blob postgres list
   blob postgres create <name> [--version V] [--database D]
@@ -192,7 +199,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.33.0"
+var version = "0.34.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -254,6 +261,8 @@ func main() {
 		cmdIdentity(args)
 	case "status-pages", "statuspage":
 		cmdStatusPages(args)
+	case "plugins", "plugin":
+		cmdPlugins(args)
 	case "volumes":
 		cmdVolumes(args)
 	case "secrets":
@@ -808,7 +817,7 @@ func cmdStatus(args []string) {
 	if len(out.Allocations) > 0 {
 		fmt.Println("allocations:")
 		for _, a := range out.Allocations {
-			fmt.Printf("  %s  %-12s %s\n", a.ID[:8], a.Status, a.Node)
+			fmt.Printf("  %s  %-12s %s\n", display.ShortID(a.ID), a.Status, a.Node)
 		}
 	}
 }
@@ -1155,10 +1164,7 @@ func cmdNodes(args []string) {
 		}
 		fmt.Printf("%-10s %-18s %-15s %-8s %-10s %-4s %-17s %-21s %-23s %s\n", "ID", "NAME", "ADDR", "STATUS", "ELIGIBLE", "DC", "CPU R/A/T", "MEM R/A/T", "DISK R/A/T", "ALLOC")
 		for _, n := range out.Nodes {
-			id := n.ID
-			if len(id) > 8 {
-				id = id[:8]
-			}
+			id := display.ShortID(n.ID)
 			elig := n.Eligible
 			if n.Drain {
 				elig = "draining"
@@ -1201,10 +1207,7 @@ func cmdNodes(args []string) {
 }
 
 func formatUsage(u api.ResourceUsage, suffix string) string {
-	if suffix != "" {
-		return fmt.Sprintf("%d/%d/%d%s", u.Reserved, u.Available, u.Total, suffix)
-	}
-	return fmt.Sprintf("%d/%d/%d", u.Reserved, u.Available, u.Total)
+	return display.ResourceUsage(u, suffix)
 }
 
 func cmdCosts(args []string) {
@@ -1274,10 +1277,7 @@ func printCostNodes(nodes []api.CostNode) {
 	}
 	fmt.Printf("%-10s %-18s %-15s %-8s %-10s %-17s %-21s %-23s %-7s %s\n", "ID", "NAME", "ADDR", "STATUS", "ELIGIBLE", "CPU R/A/T", "MEM R/A/T", "DISK R/A/T", "EST", "ALLOC")
 	for _, n := range nodes {
-		id := n.ID
-		if len(id) > 8 {
-			id = id[:8]
-		}
+		id := display.ShortID(n.ID)
 		est := "-"
 		if n.MonthlyEstimateUSD > 0 {
 			est = fmt.Sprintf("$%.2f", n.MonthlyEstimateUSD)
@@ -1572,6 +1572,114 @@ func printStatusPage(out *api.StatusPageResponse) {
 			fmt.Printf("       %s\n", issue.Detail)
 		}
 	}
+}
+
+func cmdPlugins(args []string) {
+	if len(args) == 0 {
+		die("usage: blob plugins <set|list|show|enable|disable|remove> ...")
+	}
+	c := mustClient()
+	switch args[0] {
+	case "list", "ls":
+		out, err := c.ListPlugins(context.Background())
+		if err != nil {
+			die("%v", err)
+		}
+		if len(out.Plugins) == 0 {
+			fmt.Println("no plugins")
+			return
+		}
+		fmt.Printf("%-30s %-8s %-8s %-28s %-28s %s\n", "APP", "ENABLED", "TIMEOUT", "PRE", "POST", "UPDATED")
+		for _, p := range out.Plugins {
+			fmt.Printf("%-30s %-8t %-8d %-28s %-28s %s\n", p.App, p.Enabled, p.TimeoutSeconds, pluginCommandCell(p.PreDeploy), pluginCommandCell(p.PostDeploy), p.UpdatedAt.Format(time.RFC3339))
+		}
+	case "show":
+		flags := parseFlags(args[1:])
+		app := positional(flags, 0)
+		if app == "" {
+			die("usage: blob plugins show <app>")
+		}
+		out, err := c.GetPlugin(context.Background(), app)
+		if err != nil {
+			die("%v", err)
+		}
+		b, _ := json.MarshalIndent(out, "", "  ")
+		fmt.Println(string(b))
+	case "set":
+		flags := parseFlags(args[1:])
+		app := positional(flags, 0)
+		if app == "" || (strings.TrimSpace(flags["pre"]) == "" && strings.TrimSpace(flags["post"]) == "") {
+			die("usage: blob plugins set <app> [--pre CMD] [--post CMD] [--timeout S]")
+		}
+		enabled := flags["disabled"] != "true"
+		req := &api.SetPluginRequest{Enabled: &enabled, PreDeploy: flags["pre"], PostDeploy: flags["post"], TimeoutSeconds: atoi(flags["timeout"])}
+		out, err := c.SetPlugin(context.Background(), app, req)
+		if err != nil {
+			die("%v", err)
+		}
+		printPlugin(out)
+	case "enable", "disable":
+		flags := parseFlags(args[1:])
+		app := positional(flags, 0)
+		if app == "" {
+			die("usage: blob plugins %s <app>", args[0])
+		}
+		current, err := c.GetPlugin(context.Background(), app)
+		if err != nil {
+			die("%v", err)
+		}
+		enabled := args[0] == "enable"
+		req := &api.SetPluginRequest{Enabled: &enabled, PreDeploy: current.PreDeploy, PostDeploy: current.PostDeploy, TimeoutSeconds: current.TimeoutSeconds}
+		out, err := c.SetPlugin(context.Background(), app, req)
+		if err != nil {
+			die("%v", err)
+		}
+		printPlugin(out)
+	case "remove", "rm", "delete":
+		flags := parseFlags(args[1:])
+		app := positional(flags, 0)
+		if app == "" {
+			die("usage: blob plugins remove <app> [--yes]")
+		}
+		if flags["yes"] != "true" {
+			fmt.Printf("remove plugin config for %q? type the app name to confirm: ", app)
+			var line string
+			fmt.Fscanln(os.Stdin, &line)
+			if line != app {
+				die("aborted")
+			}
+		}
+		if err := c.DeletePlugin(context.Background(), app); err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("removed plugin config for %s\n", app)
+	default:
+		die("unknown plugins subcommand: %s", args[0])
+	}
+}
+
+func pluginCommandCell(cmd string) string {
+	cmd = strings.ReplaceAll(cmd, "\n", " ")
+	if len(cmd) > 27 {
+		return cmd[:24] + "..."
+	}
+	if cmd == "" {
+		return "-"
+	}
+	return cmd
+}
+
+func printPlugin(p *api.PluginConfig) {
+	fmt.Printf("app:      %s\n", p.App)
+	fmt.Printf("enabled:  %t\n", p.Enabled)
+	fmt.Printf("timeout:  %ds\n", p.TimeoutSeconds)
+	if p.PreDeploy != "" {
+		fmt.Printf("pre:      %s\n", p.PreDeploy)
+	}
+	if p.PostDeploy != "" {
+		fmt.Printf("post:     %s\n", p.PostDeploy)
+	}
+	fmt.Printf("updated:  %s\n", p.UpdatedAt.Format(time.RFC3339))
 }
 
 // openURL opens a URL in the user's default browser.

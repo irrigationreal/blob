@@ -278,4 +278,4 @@ curl -fsSL https://raw.githubusercontent.com/darvell/blob/main/scripts/install.s
 
 ## Things that don't exist yet
 
-The spec describes much more (multi-region failover, autoscaling, observability stack, hot journal volumes, plugins, web console). The runtime in this repo is the deploy-and-operate core, deliberately small. See README.md for the explicit shipped vs. roadmap table.
+The spec describes much more (multi-region failover, hot journal volumes, GPU/confidential compute). The runtime in this repo is the deploy-and-operate core, deliberately small. See README.md for the explicit shipped vs. roadmap table.

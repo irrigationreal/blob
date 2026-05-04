@@ -407,6 +407,27 @@ type CostSnapshot struct {
 	Nodes       []CostNode  `json:"nodes,omitempty"`
 }
 
+// Deploy plugins / hooks
+type PluginConfig struct {
+	App            string    `json:"app"`
+	Enabled        bool      `json:"enabled"`
+	PreDeploy      string    `json:"pre_deploy,omitempty"`
+	PostDeploy     string    `json:"post_deploy,omitempty"`
+	TimeoutSeconds int       `json:"timeout_seconds,omitempty"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+type SetPluginRequest struct {
+	Enabled        *bool  `json:"enabled,omitempty"`
+	PreDeploy      string `json:"pre_deploy,omitempty"`
+	PostDeploy     string `json:"post_deploy,omitempty"`
+	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
+}
+
+type ListPluginsResponse struct {
+	Plugins []PluginConfig `json:"plugins"`
+}
+
 type JoinTokenResponse struct {
 	Address    string `json:"address"`     // host:port of Nomad server
 	Token      string `json:"token"`       // bootstrap token (or empty if ACLs disabled)

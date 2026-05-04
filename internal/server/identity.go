@@ -129,14 +129,17 @@ func (s *Server) requiredScope(r *http.Request) string {
 	if path == "/v1/whoami" {
 		return ""
 	}
-	if strings.HasPrefix(path, "/ui/identity") || strings.HasPrefix(path, "/v1/identity") {
+	if strings.HasPrefix(path, "/ui") {
+		if scope, ok := uiScopeForPath(path); ok {
+			return scope
+		}
+		return "admin:read"
+	}
+	if strings.HasPrefix(path, "/v1/identity") {
 		return "identity:admin"
 	}
-	if strings.HasPrefix(path, "/ui/audit") || strings.HasPrefix(path, "/v1/audit") {
+	if strings.HasPrefix(path, "/v1/audit") {
 		return "audit:read"
-	}
-	if strings.HasPrefix(path, "/ui/apps") {
-		return "apps:read"
 	}
 	if strings.HasPrefix(path, "/v1/secrets") {
 		if method == "GET" {
@@ -164,12 +167,7 @@ func (s *Server) handleIdentityRoot(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 405, "method not allowed")
 		return
 	}
-	tokens, err := s.listIdentityTokens()
-	if err != nil {
-		writeErr(w, 500, err.Error())
-		return
-	}
-	grants, err := s.listIdentityGrants("")
+	tokens, grants, err := s.identityOverview()
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -293,17 +291,36 @@ func (s *Server) createIdentityToken(req *api.CreateIdentityTokenRequest) (*api.
 }
 
 func (s *Server) listIdentityTokens() (*api.ListIdentityTokensResponse, error) {
+	tokens, _, err := s.identityOverview()
+	return tokens, err
+}
+
+func (s *Server) identityOverview() (*api.ListIdentityTokensResponse, *api.ListIdentityGrantsResponse, error) {
 	metas, err := s.loadIdentityTokenMetas()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	out := &api.ListIdentityTokensResponse{}
+	sets, err := s.loadAllIdentityGrantSets()
+	if err != nil {
+		return nil, nil, err
+	}
+	scopesByToken := map[string][]string{}
+	grants := &api.ListIdentityGrantsResponse{}
+	for _, set := range sets {
+		scopes := append([]string(nil), set.Scopes...)
+		sort.Strings(scopes)
+		scopesByToken[set.TokenID] = scopes
+		for _, scope := range scopes {
+			grants.Grants = append(grants.Grants, api.IdentityGrant{TokenID: set.TokenID, Scope: scope, CreatedAt: set.UpdatedAt})
+		}
+	}
+	tokens := &api.ListIdentityTokensResponse{}
 	for _, meta := range metas {
-		scopes, _ := s.scopesForToken(meta.ID)
-		out.Tokens = append(out.Tokens, publicIdentityToken(&meta, scopes))
+		tokens.Tokens = append(tokens.Tokens, publicIdentityToken(&meta, scopesByToken[meta.ID]))
 	}
-	sort.Slice(out.Tokens, func(i, j int) bool { return out.Tokens[i].CreatedAt.Before(out.Tokens[j].CreatedAt) })
-	return out, nil
+	sort.Slice(tokens.Tokens, func(i, j int) bool { return tokens.Tokens[i].CreatedAt.Before(tokens.Tokens[j].CreatedAt) })
+	sortIdentityGrants(grants.Grants)
+	return tokens, grants, nil
 }
 
 func (s *Server) addIdentityGrant(req *api.IdentityGrantRequest) (*api.IdentityGrant, error) {
@@ -334,6 +351,37 @@ func (s *Server) addIdentityGrant(req *api.IdentityGrantRequest) (*api.IdentityG
 	return &api.IdentityGrant{TokenID: req.TokenID, Scope: req.Scope, CreatedAt: set.UpdatedAt}, nil
 }
 
+func (s *Server) loadAllIdentityGrantSets() ([]*identityGrantSet, error) {
+	entries, err := os.ReadDir(s.identityGrantsDir())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	sets := make([]*identityGrantSet, 0, len(entries))
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		set, err := s.loadIdentityGrantSet(strings.TrimSuffix(e.Name(), ".json"))
+		if err != nil {
+			continue
+		}
+		sets = append(sets, set)
+	}
+	return sets, nil
+}
+
+func sortIdentityGrants(grants []api.IdentityGrant) {
+	sort.Slice(grants, func(i, j int) bool {
+		if grants[i].TokenID == grants[j].TokenID {
+			return grants[i].Scope < grants[j].Scope
+		}
+		return grants[i].TokenID < grants[j].TokenID
+	})
+}
+
 func (s *Server) listIdentityGrants(tokenID string) (*api.ListIdentityGrantsResponse, error) {
 	out := &api.ListIdentityGrantsResponse{}
 	if tokenID != "" {
@@ -347,36 +395,25 @@ func (s *Server) listIdentityGrants(tokenID string) (*api.ListIdentityGrantsResp
 			}
 			return nil, err
 		}
-		for _, scope := range set.Scopes {
+		scopes := append([]string(nil), set.Scopes...)
+		sort.Strings(scopes)
+		for _, scope := range scopes {
 			out.Grants = append(out.Grants, api.IdentityGrant{TokenID: tokenID, Scope: scope, CreatedAt: set.UpdatedAt})
 		}
 		return out, nil
 	}
-	entries, err := os.ReadDir(s.identityGrantsDir())
+	sets, err := s.loadAllIdentityGrantSets()
 	if err != nil {
-		if os.IsNotExist(err) {
-			return out, nil
-		}
 		return nil, err
 	}
-	for _, e := range entries {
-		if !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		set, err := s.loadIdentityGrantSet(strings.TrimSuffix(e.Name(), ".json"))
-		if err != nil {
-			continue
-		}
-		for _, scope := range set.Scopes {
+	for _, set := range sets {
+		scopes := append([]string(nil), set.Scopes...)
+		sort.Strings(scopes)
+		for _, scope := range scopes {
 			out.Grants = append(out.Grants, api.IdentityGrant{TokenID: set.TokenID, Scope: scope, CreatedAt: set.UpdatedAt})
 		}
 	}
-	sort.Slice(out.Grants, func(i, j int) bool {
-		if out.Grants[i].TokenID == out.Grants[j].TokenID {
-			return out.Grants[i].Scope < out.Grants[j].Scope
-		}
-		return out.Grants[i].TokenID < out.Grants[j].TokenID
-	})
+	sortIdentityGrants(out.Grants)
 	return out, nil
 }
 

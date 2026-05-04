@@ -1100,3 +1100,33 @@ func (c *Client) JobLogs(ctx context.Context, id string, fire int) (*api.JobLogs
 func (c *Client) CancelJob(ctx context.Context, id string) error {
 	return c.do(ctx, "DELETE", "/v1/jobs/"+url.PathEscape(id), nil, nil)
 }
+
+// --- Deploy plugins / hooks (v0.34) ---
+
+func (c *Client) ListPlugins(ctx context.Context) (*api.ListPluginsResponse, error) {
+	out := &api.ListPluginsResponse{}
+	if err := c.do(ctx, "GET", "/v1/plugins", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) GetPlugin(ctx context.Context, app string) (*api.PluginConfig, error) {
+	out := &api.PluginConfig{}
+	if err := c.do(ctx, "GET", "/v1/plugins/"+url.PathEscape(app), nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) SetPlugin(ctx context.Context, app string, req *api.SetPluginRequest) (*api.PluginConfig, error) {
+	out := &api.PluginConfig{}
+	if err := c.do(ctx, "PUT", "/v1/plugins/"+url.PathEscape(app), req, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) DeletePlugin(ctx context.Context, app string) error {
+	return c.do(ctx, "DELETE", "/v1/plugins/"+url.PathEscape(app), nil, nil)
+}
