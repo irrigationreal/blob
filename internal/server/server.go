@@ -597,6 +597,18 @@ func (s *Server) handleAppItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, 200, out)
+	case len(parts) == 2 && parts[1] == "rollback" && r.Method == "POST":
+		var rr api.RollbackRequest
+		if err := json.NewDecoder(r.Body).Decode(&rr); err != nil {
+			writeErr(w, 400, err.Error())
+			return
+		}
+		out, err := s.rollbackApp(r.Context(), app, rr.Revision)
+		if err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		writeJSON(w, 200, out)
 	case len(parts) == 2 && parts[1] == "domains" && r.Method == "POST":
 		var dr api.DomainAttachRequest
 		if err := json.NewDecoder(r.Body).Decode(&dr); err != nil {

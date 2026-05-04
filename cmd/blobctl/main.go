@@ -45,6 +45,7 @@ Usage:
   blob scale <app> <replicas>                     Scale a service
   blob restart <app>                              Restart all allocations
   blob releases <app>                             Show deploy history
+  blob rollback <app> <revision> [--yes]          Resubmit a previous release image through Blob
   blob destroy <app> [--yes]                      Tear down an app
   blob open <app>                                 Open the app's URL in your browser
 
@@ -199,7 +200,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.34.0"
+var version = "0.35.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -243,6 +244,8 @@ func main() {
 		cmdRestart(args)
 	case "releases":
 		cmdReleases(args)
+	case "rollback":
+		cmdRollback(args)
 	case "destroy", "rm":
 		cmdDestroy(args)
 	case "open":
@@ -1032,11 +1035,49 @@ func cmdReleases(args []string) {
 	}
 	fmt.Printf("%-4s %-50s %s\n", "REV", "IMAGE", "CREATED")
 	for _, r := range out.Releases {
-		img := r.Image
-		if len(img) > 49 {
-			img = "..." + img[len(img)-46:]
+		fmt.Printf("%-4d %-50s %s\n", r.Revision, shortImage(r.Image), r.CreatedAt.Format(time.RFC3339))
+	}
+}
+
+func shortImage(img string) string {
+	if len(img) > 49 {
+		return "..." + img[len(img)-46:]
+	}
+	return img
+}
+
+func cmdRollback(args []string) {
+	flags := parseFlags(args)
+	app := positional(flags, 0)
+	revisionText := positional(flags, 1)
+	revision := atoi(revisionText)
+	if app == "" || revisionText == "" || revision < 0 {
+		die("usage: blob rollback <app> <revision> [--yes]")
+	}
+	if flags["yes"] != "true" {
+		fmt.Printf("rollback %q to revision %d? type the app name to confirm: ", app, revision)
+		var line string
+		fmt.Fscanln(os.Stdin, &line)
+		if line != app {
+			die("aborted")
 		}
-		fmt.Printf("%-4d %-50s %s\n", r.Revision, img, r.CreatedAt.Format(time.RFC3339))
+	}
+	c := mustClient()
+	out, err := c.Rollback(context.Background(), app, revision)
+	if err != nil {
+		die("%v", err)
+	}
+	fmt.Printf("rolled back %s to revision %d\n", out.JobID, out.Revision)
+	fmt.Printf("image: %s\n", out.Image)
+	if out.URL != "" {
+		fmt.Printf("url:   %s\n", out.URL)
+	}
+	for _, p := range out.Phases {
+		status := "ok"
+		if !p.OK {
+			status = "fail"
+		}
+		fmt.Printf("  %-12s %6dms  %s %s\n", p.Name, p.DurationMS, status, p.Note)
 	}
 }
 

@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -316,34 +318,40 @@ func (s *Server) restartApp(ctx context.Context, app string) error {
 	return s.run(ctx, "nomad", "job", "restart", "-yes", app)
 }
 
+type nomadJobVersionsResponse struct {
+	Versions []nomadJobVersion `json:"Versions"`
+}
+
+type nomadJobVersion struct {
+	Version    int                    `json:"Version"`
+	Stable     bool                   `json:"Stable"`
+	SubmitTime int64                  `json:"SubmitTime"`
+	TaskGroups []nomadJobVersionGroup `json:"TaskGroups"`
+}
+
+type nomadJobVersionGroup struct {
+	Tasks []nomadJobVersionTask `json:"Tasks"`
+}
+
+type nomadJobVersionTask struct {
+	Name   string `json:"Name"`
+	Config struct {
+		Image string `json:"image"`
+	} `json:"Config"`
+}
+
 func (s *Server) appReleases(ctx context.Context, app string) (*api.ListReleasesResponse, error) {
 	body, err := s.nomadGET(ctx, "/v1/job/"+app+"/versions")
 	if err != nil {
 		return nil, err
 	}
-	var raw struct {
-		Versions []struct {
-			Version    int
-			Stable     bool
-			SubmitTime int64
-			TaskGroups []struct {
-				Tasks []struct {
-					Config struct {
-						Image string
-					}
-				}
-			}
-		}
-	}
+	var raw nomadJobVersionsResponse
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, err
 	}
 	resp := &api.ListReleasesResponse{}
 	for _, v := range raw.Versions {
-		image := ""
-		if len(v.TaskGroups) > 0 && len(v.TaskGroups[0].Tasks) > 0 {
-			image = v.TaskGroups[0].Tasks[0].Config.Image
-		}
+		image := imageFromVersionTaskGroups(v.TaskGroups)
 		resp.Releases = append(resp.Releases, api.Release{
 			Revision:  v.Version,
 			JobID:     app,
@@ -354,6 +362,148 @@ func (s *Server) appReleases(ctx context.Context, app string) (*api.ListReleases
 	}
 	sort.Slice(resp.Releases, func(i, j int) bool { return resp.Releases[i].Revision > resp.Releases[j].Revision })
 	return resp, nil
+}
+
+func imageFromVersionTaskGroups(groups []nomadJobVersionGroup) string {
+	for _, group := range groups {
+		for _, task := range group.Tasks {
+			if task.Name == "app" && task.Config.Image != "" {
+				return task.Config.Image
+			}
+		}
+	}
+	if len(groups) > 0 && len(groups[0].Tasks) > 0 {
+		return groups[0].Tasks[0].Config.Image
+	}
+	return ""
+}
+
+var appTaskImageRE = regexp.MustCompile(`(?s)(task "app" \{.*?config \{.*?image\s*=\s*)"[^"]+"`)
+
+func replaceAppTaskImage(hcl, image string) (string, bool) {
+	loc := appTaskImageRE.FindStringSubmatchIndex(hcl)
+	if loc == nil || len(loc) < 4 {
+		return hcl, false
+	}
+	return hcl[:loc[3]] + strconv.Quote(image) + hcl[loc[1]:], true
+}
+
+func replaceProjectionHashInJobFile(hcl, hash string) (string, error) {
+	needle := projectionMetaKey + " = \""
+	i := strings.Index(hcl, needle)
+	if i < 0 {
+		return "", errors.New("rendered job file has no projection hash; re-deploy before rolling back")
+	}
+	start := i + len(needle)
+	end := strings.Index(hcl[start:], "\"")
+	if end < 0 {
+		return "", errors.New("rendered job file has malformed projection hash")
+	}
+	end += start
+	return hcl[:start] + hash + hcl[end:], nil
+}
+
+func rollbackProjectionHash(hcl, image string, revision int) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("blob-rollback-v1\nrevision=%d\nimage=%s\n%s", revision, image, hcl)))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func (s *Server) rollbackApp(ctx context.Context, app string, revision int) (*api.RollbackResponse, error) {
+	if revision < 0 {
+		return nil, errors.New("revision must be >= 0")
+	}
+	releases, err := s.appReleases(ctx, app)
+	if err != nil {
+		return nil, err
+	}
+	image := ""
+	for _, release := range releases.Releases {
+		if release.Revision == revision {
+			image = release.Image
+			break
+		}
+	}
+	if image == "" {
+		return nil, fmt.Errorf("revision %d not found or has no image", revision)
+	}
+	meta, ok := s.loadJobMeta(app)
+	if !ok {
+		return nil, errors.New("no Blob metadata for this app; re-deploy before rolling back")
+	}
+	jobPath := filepath.Join(s.cfg.JobsDir, app+".nomad")
+	existing, err := readFile(jobPath)
+	if err != nil {
+		return nil, fmt.Errorf("read rendered job file: %w", err)
+	}
+	updated, ok := replaceAppTaskImage(existing, image)
+	if !ok {
+		return nil, errors.New("could not find app task image in rendered job file")
+	}
+	hash := rollbackProjectionHash(updated, image, revision)
+	updated, err = replaceProjectionHashInJobFile(updated, hash)
+	if err != nil {
+		return nil, err
+	}
+	if meta.App == "" {
+		meta.App, meta.Environment = splitJobID(app)
+	}
+	out := &api.RollbackResponse{App: meta.App, JobID: app, Revision: revision, Image: image, StartedAt: time.Now()}
+	if isHTTPForm(meta.Form) && meta.Domain != "" {
+		out.URL = "https://" + meta.Domain
+	}
+	hookReq := &api.DeployRequest{App: meta.App, Environment: meta.Environment, Domain: meta.Domain, Form: meta.Form, Isolation: meta.Isolation, Services: meta.Services}
+	hook := pluginHookContext{JobID: app, Image: image, URL: out.URL}
+	if err := s.recordRollbackPhase(out, "plugin-pre", func() error {
+		return s.runDeployHook(ctx, pluginHookPre, hookReq, hook)
+	}); err != nil {
+		return nil, err
+	}
+	tmp := filepath.Join(s.cfg.JobsDir, fmt.Sprintf(".%s-rollback-%d.nomad", app, time.Now().UnixNano()))
+	if err := os.WriteFile(tmp, []byte(updated), 0o644); err != nil {
+		return nil, err
+	}
+	defer removeIgnoringMissing(tmp)
+	if err := s.recordRollbackPhase(out, "rollback", func() error { return s.run(ctx, "nomad", "job", "run", tmp) }); err != nil {
+		return nil, err
+	}
+	if err := writeFileAtomic(jobPath, []byte(updated)); err != nil {
+		return nil, err
+	}
+	meta.Image = image
+	meta.ProjectionHash = hash
+	meta.UpdatedAt = time.Now().UTC()
+	mb, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	if err := writeFileAtomic(filepath.Join(s.cfg.JobsDir, app+".meta.json"), mb); err != nil {
+		return nil, err
+	}
+	if isLongRunningForm(meta.Form) {
+		if err := s.recordRollbackPhase(out, "ready", func() error { return s.waitJobRunning(ctx, app, 60*time.Second) }); err != nil {
+			return out, fmt.Errorf("did not become ready: %w", err)
+		}
+	}
+	if err := s.recordRollbackPhase(out, "plugin-post", func() error {
+		return s.runDeployHook(ctx, pluginHookPost, hookReq, hook)
+	}); err != nil {
+		return out, err
+	}
+	return out, nil
+}
+
+func (s *Server) recordRollbackPhase(out *api.RollbackResponse, name string, fn func() error) error {
+	t0 := time.Now()
+	err := fn()
+	phase := api.Phase{Name: name, DurationMS: time.Since(t0).Milliseconds(), OK: err == nil, When: t0}
+	if err != nil {
+		phase.Note = err.Error()
+	}
+	out.Phases = append(out.Phases, phase)
+	if err != nil {
+		return fmt.Errorf("%s: %w", name, err)
+	}
+	return nil
 }
 
 func (s *Server) appExec(ctx context.Context, app string, command []string) (*api.ExecResponse, error) {

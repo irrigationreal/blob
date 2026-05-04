@@ -39,10 +39,11 @@ This issues `nomad job restart` which blue/greens the allocations one at a time.
 `blob releases <app>` lists revisions. To roll back to revision N:
 
 ```sh
-nomad job revert <app> <N>
+blob releases <app>
+blob rollback <app> <N>
 ```
 
-(There is no `blob rollback` yet; this is on the roadmap. Until then `nomad job revert` is the safe path.)
+Blob resubmits the selected release image through the stored rendered job file, updates the projection metadata that `blob doctor` checks, and waits for long-running workloads to come back up. This keeps rollback inside Blob's drift model instead of mutating Nomad behind its back.
 
 ### Drain a node before reboot
 

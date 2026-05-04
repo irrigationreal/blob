@@ -79,7 +79,7 @@ The same platform host runs these via `blob import compose|procfile|fly` → `bl
 | **Multiple hostnames** per app                                 | shipped  |
 | **Scaling** (`blob scale`)                                     | shipped  |
 | **Restart** (`blob restart`)                                   | shipped  |
-| **Releases** (`blob releases`)                                 | shipped  |
+| **Releases / rollback** (`blob releases`, `blob rollback`)      | shipped  |
 | **Exec** into a running allocation (`blob exec`)               | shipped  |
 | **Open** in browser (`blob open`)                              | shipped  |
 | **Volumes**: per-app Docker named volumes                      | shipped  |
@@ -117,6 +117,7 @@ Three short docs:
 - **[`docs/audit.md`](docs/audit.md)** — append-only hash-chained audit log for authenticated write actions.
 - **[`docs/identity.md`](docs/identity.md)** — scoped service tokens and grants for automation.
 - **[`docs/plugins.md`](docs/plugins.md)** — per-app deploy hooks for build/deploy automation.
+- **[`docs/rollback.md`](docs/rollback.md)** — first-class app rollback without Nomad drift.
 - **[`docs/costs.md`](docs/costs.md)** — resource accounting and optional monthly cost rollups.
 - **[`docs/web-console.md`](docs/web-console.md)** — server-rendered authenticated operator UI at `/ui`.
 - **[`docs/managed-services.md`](docs/managed-services.md)** — managed Postgres: create, bind apps via `services:`, get the DSN, destroy.
@@ -224,6 +225,7 @@ blob logs <app> [-n 200]
 blob scale <app> <replicas>
 blob restart <app>
 blob releases <app>
+blob rollback <app> <revision> [--yes]
 blob open <app>
 blob exec <app> -- <cmd ...>
 blob destroy <app> [--yes]

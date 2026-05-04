@@ -469,6 +469,20 @@ type ListReleasesResponse struct {
 	Releases []Release `json:"releases"`
 }
 
+type RollbackRequest struct {
+	Revision int `json:"revision"`
+}
+
+type RollbackResponse struct {
+	App       string    `json:"app"`
+	JobID     string    `json:"job_id"`
+	Revision  int       `json:"revision"`
+	Image     string    `json:"image"`
+	URL       string    `json:"url,omitempty"`
+	StartedAt time.Time `json:"started_at"`
+	Phases    []Phase   `json:"phases"`
+}
+
 // Exec
 type ExecRequest struct {
 	Command []string `json:"command"`

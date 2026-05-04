@@ -387,6 +387,14 @@ func (c *Client) Releases(ctx context.Context, app string) (*api.ListReleasesRes
 	return out, nil
 }
 
+func (c *Client) Rollback(ctx context.Context, app string, revision int) (*api.RollbackResponse, error) {
+	out := &api.RollbackResponse{}
+	if err := c.do(ctx, "POST", "/v1/apps/"+url.PathEscape(app)+"/rollback", &api.RollbackRequest{Revision: revision}, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *Client) AttachDomain(ctx context.Context, app, host, mode string) (*api.DomainAttachResponse, error) {
 	out := &api.DomainAttachResponse{}
 	if err := c.do(ctx, "POST", "/v1/apps/"+url.PathEscape(app)+"/domains", &api.DomainAttachRequest{Host: host, Mode: mode}, out); err != nil {
