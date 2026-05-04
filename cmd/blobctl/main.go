@@ -31,6 +31,9 @@ Usage:
   blob import compose <path>                      Translate docker-compose.yaml → blob.yaml (writes alongside)
   blob import procfile <path>                     Translate Heroku Procfile → blob.yaml
   blob import fly <path>                          Translate fly.toml → blob.yaml
+  blob import render <path>                       Translate render.yaml → blob.yaml
+  blob import vercel <path>                       Translate vercel.json → blob.yaml
+  blob import nix <path>                          Translate flake.nix → blob.yaml + Dockerfile
   blob login --endpoint URL [--token T]           Save endpoint and token
   blob deploy [--name N] [--port P] [--env ENV]   Deploy current folder
        [--cpu C] [--memory M] [--replicas N]
@@ -200,7 +203,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.35.0"
+var version = "0.36.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -410,7 +413,7 @@ func cmdInit(args []string) {
 // couldn't be translated, and shows a diff vs any existing blob.yaml.
 func cmdImport(args []string) {
 	if len(args) < 2 {
-		die("usage: blob import <compose|procfile|fly|nextjs|netlify> <path> [--out PATH] [--yes]")
+		die("usage: blob import <compose|procfile|fly|nextjs|netlify|render|vercel|nix> <path> [--out PATH] [--yes]")
 	}
 	kind, srcPath := args[0], args[1]
 	flags := parseFlags(args[2:])
@@ -431,8 +434,14 @@ func cmdImport(args []string) {
 		res, err = importers.NextJS(srcPath)
 	case "netlify":
 		res, err = importers.Netlify(srcPath)
+	case "render":
+		res, err = importers.Render(srcPath)
+	case "vercel":
+		res, err = importers.Vercel(srcPath)
+	case "nix", "flake":
+		res, err = importers.NixFlake(srcPath)
 	default:
-		die("unknown import kind %q (expected: compose | procfile | fly | nextjs | netlify)", kind)
+		die("unknown import kind %q (expected: compose | procfile | fly | nextjs | netlify | render | vercel | nix)", kind)
 	}
 	if err != nil {
 		die("import %s: %v", kind, err)
@@ -578,13 +587,18 @@ func cmdDeploy(args []string) {
 	if kind := flags["from"]; kind != "" {
 		path := positional(flags, 0)
 		if path == "" {
-			die("usage: blob deploy --from <compose|procfile|fly> <path>")
+			die("usage: blob deploy --from <compose|procfile|fly|nextjs|netlify|render|vercel|nix> <path>")
 		}
 		// Force overwrite — operator opted in by passing --from.
 		cmdImport([]string{kind, path, "--yes"})
-		// Switch to the source dir so deploy reads the freshly-written
-		// blob.yaml and tarballs that folder.
+		// Switch to the directory that received blob.yaml so deploy reads it
+		// and tarballs that folder. Directory importers (nextjs, netlify,
+		// vercel, nix) write into the directory itself; file importers write
+		// next to the source file.
 		dir := filepath.Dir(path)
+		if fi, err := os.Stat(path); err == nil && fi.IsDir() {
+			dir = path
+		}
 		if err := os.Chdir(dir); err != nil {
 			die("chdir %s: %v", dir, err)
 		}
