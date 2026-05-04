@@ -7,7 +7,7 @@ This is the runbook for keeping a Blob healthy. Pair it with `blob doctor`, whic
 | What                | Where                                            |
 |---                  |---                                               |
 | Nomad job specs     | `/srv/blob/jobs/<job>.nomad`                     |
-| Job metadata        | `/srv/blob/jobs/<job>.meta.json`                 |
+| Job metadata        | `/srv/blob/jobs/<job>.meta.json` (includes the last accepted manifest projection hash from v0.26 onward) |
 | Uploaded sources    | `/srv/blob/sources/<app>/`                       |
 | Encrypted secrets   | `/srv/blob/secrets/<env>/<name>.enc`             |
 | Secret store key    | `/etc/blob/secret-key`                           |
@@ -234,6 +234,8 @@ If a preview gets stuck (PR closed but the preview still up), `blob preview dest
 - **info** — odd state worth knowing about.
 
 A non-zero exit from `blob doctor` indicates at least one P1.
+
+From v0.26 onward, every `blob deploy` writes a deterministic manifest projection hash into `/srv/blob/jobs/<job>.meta.json`, the rendered `/srv/blob/jobs/<job>.nomad`, and the live Nomad job's `meta.blob_projection_hash`. `blob doctor` compares all three. A mismatch means the live job or on-disk job file was changed outside Blob after the last accepted deploy; re-run `blob deploy` to restore the intended projection.
 
 ## Upgrades
 

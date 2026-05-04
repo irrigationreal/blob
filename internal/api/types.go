@@ -30,6 +30,10 @@ type DeployRequest struct {
 	Index    string `json:"index,omitempty"`
 	NotFound string `json:"not_found,omitempty"`
 	SPA      bool   `json:"spa,omitempty"`
+
+	// ProjectionHash is server-owned. blobd writes it into Nomad job metadata
+	// and sidecar .meta.json files so doctor can detect out-of-band drift.
+	ProjectionHash string `json:"-"`
 }
 
 type SecretBinding struct {

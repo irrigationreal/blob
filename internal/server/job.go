@@ -12,19 +12,8 @@ import (
 // Supports forms: web-service, daemon, job (batch), cronjob (periodic batch).
 // Bundles are expressed as a single group with one primary task plus sidecars.
 func renderJob(req *api.DeployRequest, image string, port int, domain, dc string, namespacedID string) string {
-	if req.CPU <= 0 {
-		req.CPU = 500
-	}
-	if req.Memory <= 0 {
-		req.Memory = 512
-	}
-	if req.Replicas <= 0 {
-		req.Replicas = 1
-	}
+	normalizeDeployRequestForRender(req)
 	form := req.Form
-	if form == "" {
-		form = "web-service"
-	}
 
 	isolation := normalizeIsolation(req.Isolation)
 	envBlock := renderEnvBlock(req.Env, req.Secrets)
@@ -45,6 +34,24 @@ func renderJob(req *api.DeployRequest, image string, port int, domain, dc string
 	}
 }
 
+func normalizeDeployRequestForRender(req *api.DeployRequest) {
+	if req.CPU <= 0 {
+		req.CPU = 500
+	}
+	if req.Memory <= 0 {
+		req.Memory = 512
+	}
+	if req.Replicas <= 0 {
+		req.Replicas = 1
+	}
+	if req.Form == "" {
+		req.Form = "web-service"
+	}
+	if normalizeIsolation(req.Isolation) == "" {
+		req.Isolation = ""
+	}
+}
+
 func normalizeIsolation(isolation string) string {
 	switch strings.ToLower(strings.TrimSpace(isolation)) {
 	case "kata":
@@ -52,6 +59,17 @@ func normalizeIsolation(isolation string) string {
 	default:
 		return ""
 	}
+}
+
+func renderProjectionMeta(hash string) string {
+	if hash == "" {
+		return ""
+	}
+	return fmt.Sprintf(`  meta {
+    blob_projection_hash = %q
+  }
+
+`, hash)
 }
 
 func renderIsolationConstraint(isolation string) string {
@@ -76,12 +94,13 @@ func renderDockerRuntime(isolation string) string {
 func renderWebService(id, dc, image string, port int, domain string, req *api.DeployRequest, envBlock, volBlocks, volMounts, sidecars string) string {
 	cmdBlock := renderCommandBlock(req.Command)
 	traefikTags := renderTraefikTags(id, domain, req.Domains)
+	projectionMeta := renderProjectionMeta(req.ProjectionHash)
 	constraintBlock := renderIsolationConstraint(req.Isolation)
 	runtimeBlock := renderDockerRuntime(req.Isolation)
 	return fmt.Sprintf(`job %q {
   datacenters = [%q]
   type = "service"
-
+%s
   group "web" {
     count = %d
 %s%s
@@ -112,7 +131,7 @@ func renderWebService(id, dc, image string, port int, domain string, req *api.De
     }
 %s  }
 }
-`, id, dc, req.Replicas, constraintBlock, volBlocks, port, id, traefikTags, image, runtimeBlock, cmdBlock, volMounts, envBlock, req.CPU, req.Memory, sidecars)
+`, id, dc, projectionMeta, req.Replicas, constraintBlock, volBlocks, port, id, traefikTags, image, runtimeBlock, cmdBlock, volMounts, envBlock, req.CPU, req.Memory, sidecars)
 }
 
 // renderTraefikTags returns the tags for a service. The primary domain plus any
@@ -143,47 +162,12 @@ func renderTraefikTags(id, primary string, extras []string) string {
 
 func renderDaemon(id, dc, image string, req *api.DeployRequest, envBlock, volBlocks, volMounts, sidecars string) string {
 	cmdBlock := renderCommandBlock(req.Command)
+	projectionMeta := renderProjectionMeta(req.ProjectionHash)
 	constraintBlock := renderIsolationConstraint(req.Isolation)
 	runtimeBlock := renderDockerRuntime(req.Isolation)
 	return fmt.Sprintf(`job %q {
   datacenters = [%q]
   type = "service"
-
-  group "main" {
-    count = %d
-%s%s
-    task "app" {
-      driver = "docker"
-      config {
-        image = %q
-%s%s%s      }
-%s      resources {
-        cpu    = %d
-        memory = %d
-      }
-    }
-%s  }
-}
-`, id, dc, req.Replicas, constraintBlock, volBlocks, image, runtimeBlock, cmdBlock, volMounts, envBlock, req.CPU, req.Memory, sidecars)
-}
-
-func renderBatch(id, dc, image string, req *api.DeployRequest, envBlock, volBlocks, volMounts, sidecars string, periodic bool, cron string) string {
-	periodicBlock := ""
-	if periodic {
-		periodicBlock = fmt.Sprintf(`
-  periodic {
-    cron             = %q
-    prohibit_overlap = true
-    time_zone        = "UTC"
-  }
-`, cron)
-	}
-	cmdBlock := renderCommandBlock(req.Command)
-	constraintBlock := renderIsolationConstraint(req.Isolation)
-	runtimeBlock := renderDockerRuntime(req.Isolation)
-	return fmt.Sprintf(`job %q {
-  datacenters = [%q]
-  type = "batch"
 %s
   group "main" {
     count = %d
@@ -200,7 +184,44 @@ func renderBatch(id, dc, image string, req *api.DeployRequest, envBlock, volBloc
     }
 %s  }
 }
-`, id, dc, periodicBlock, req.Replicas, constraintBlock, volBlocks, image, runtimeBlock, cmdBlock, volMounts, envBlock, req.CPU, req.Memory, sidecars)
+`, id, dc, projectionMeta, req.Replicas, constraintBlock, volBlocks, image, runtimeBlock, cmdBlock, volMounts, envBlock, req.CPU, req.Memory, sidecars)
+}
+
+func renderBatch(id, dc, image string, req *api.DeployRequest, envBlock, volBlocks, volMounts, sidecars string, periodic bool, cron string) string {
+	periodicBlock := ""
+	if periodic {
+		periodicBlock = fmt.Sprintf(`
+  periodic {
+    cron             = %q
+    prohibit_overlap = true
+    time_zone        = "UTC"
+  }
+`, cron)
+	}
+	cmdBlock := renderCommandBlock(req.Command)
+	projectionMeta := renderProjectionMeta(req.ProjectionHash)
+	constraintBlock := renderIsolationConstraint(req.Isolation)
+	runtimeBlock := renderDockerRuntime(req.Isolation)
+	return fmt.Sprintf(`job %q {
+  datacenters = [%q]
+  type = "batch"
+%s%s
+  group "main" {
+    count = %d
+%s%s
+    task "app" {
+      driver = "docker"
+      config {
+        image = %q
+%s%s%s      }
+%s      resources {
+        cpu    = %d
+        memory = %d
+      }
+    }
+%s  }
+}
+`, id, dc, projectionMeta, periodicBlock, req.Replicas, constraintBlock, volBlocks, image, runtimeBlock, cmdBlock, volMounts, envBlock, req.CPU, req.Memory, sidecars)
 }
 
 // renderCommandBlock writes Docker driver `command` and `args` HCL when set.

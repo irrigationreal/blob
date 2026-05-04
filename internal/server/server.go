@@ -904,6 +904,8 @@ func (s *Server) scheduleJob(ctx context.Context, req *api.DeployRequest, image 
 	if err := os.MkdirAll(s.cfg.JobsDir, 0o755); err != nil {
 		return err
 	}
+	normalizeDeployRequestForRender(req)
+	req.ProjectionHash = hashJobProjection(req, image, port, domain, s.cfg.Datacenter, id)
 	hcl := renderJob(req, image, port, domain, s.cfg.Datacenter, id)
 	jobPath := filepath.Join(s.cfg.JobsDir, id+".nomad")
 	if err := os.WriteFile(jobPath, []byte(hcl), 0o644); err != nil {
@@ -912,15 +914,16 @@ func (s *Server) scheduleJob(ctx context.Context, req *api.DeployRequest, image 
 	// Side-by-side metadata: form, environment, domain. Used by listApps/status
 	// because the Nomad API alone can't distinguish web-service from daemon.
 	meta := jobMeta{
-		ID:          id,
-		App:         req.App,
-		Environment: req.Environment,
-		Form:        req.Form,
-		Isolation:   normalizeIsolation(req.Isolation),
-		Domain:      domain,
-		Image:       image,
-		Services:    req.Services,
-		UpdatedAt:   time.Now(),
+		ID:             id,
+		App:            req.App,
+		Environment:    req.Environment,
+		Form:           req.Form,
+		Isolation:      normalizeIsolation(req.Isolation),
+		Domain:         domain,
+		Image:          image,
+		Services:       req.Services,
+		ProjectionHash: req.ProjectionHash,
+		UpdatedAt:      time.Now(),
 	}
 	if meta.Form == "" {
 		meta.Form = "web-service"
@@ -931,15 +934,16 @@ func (s *Server) scheduleJob(ctx context.Context, req *api.DeployRequest, image 
 }
 
 type jobMeta struct {
-	ID          string    `json:"id"`
-	App         string    `json:"app"`
-	Environment string    `json:"environment"`
-	Form        string    `json:"form"`
-	Isolation   string    `json:"isolation,omitempty"`
-	Domain      string    `json:"domain"`
-	Image       string    `json:"image"`
-	Services    []string  `json:"services,omitempty"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID             string    `json:"id"`
+	App            string    `json:"app"`
+	Environment    string    `json:"environment"`
+	Form           string    `json:"form"`
+	Isolation      string    `json:"isolation,omitempty"`
+	Domain         string    `json:"domain"`
+	Image          string    `json:"image"`
+	Services       []string  `json:"services,omitempty"`
+	ProjectionHash string    `json:"projection_hash,omitempty"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 func (s *Server) loadJobMeta(id string) (jobMeta, bool) {
@@ -990,11 +994,12 @@ func (s *Server) nomadGET(ctx context.Context, path string) ([]byte, error) {
 }
 
 type nomadJob struct {
-	ID         string `json:"ID"`
-	Type       string `json:"Type"`
-	Status     string `json:"Status"`
-	Periodic   bool   `json:"Periodic"`
-	ParentID   string `json:"ParentID"`
+	ID         string            `json:"ID"`
+	Type       string            `json:"Type"`
+	Status     string            `json:"Status"`
+	Periodic   bool              `json:"Periodic"`
+	ParentID   string            `json:"ParentID"`
+	Meta       map[string]string `json:"Meta"`
 	JobSummary struct {
 		Summary map[string]struct {
 			Running, Starting, Failed, Complete int
@@ -1497,7 +1502,53 @@ func (s *Server) runDoctor(ctx context.Context) api.DoctorResponse {
 		}
 	}
 
-	// 5. orphan source dirs — a source belongs to any deployed job whose
+	// 5. projection hashes: metadata, rendered job file, and live Nomad job
+	// should agree. Legacy jobs without a projection hash are skipped until
+	// their next deploy writes v0.26 metadata.
+	resp.Checked++
+	if entries, err := os.ReadDir(s.cfg.JobsDir); err == nil {
+		for _, e := range entries {
+			if !strings.HasSuffix(e.Name(), ".meta.json") {
+				continue
+			}
+			id := strings.TrimSuffix(e.Name(), ".meta.json")
+			meta, ok := s.loadJobMeta(id)
+			if !ok || meta.ProjectionHash == "" {
+				continue
+			}
+			jobPath := filepath.Join(s.cfg.JobsDir, id+".nomad")
+			if b, err := os.ReadFile(jobPath); err != nil {
+				add("P3", "drift", id, "missing rendered job file", jobPath,
+					"Re-deploy the app to regenerate the job file, or destroy it if it is stale")
+			} else if h := projectionHashFromJobFile(string(b)); h != meta.ProjectionHash {
+				if h == "" {
+					h = "missing"
+				}
+				add("P2", "drift", id, "rendered job file projection hash mismatch",
+					fmt.Sprintf("meta=%s job_file=%s", meta.ProjectionHash, h),
+					"Re-deploy the app so the rendered Nomad file matches the last accepted manifest projection")
+			}
+			body, err := s.nomadGET(ctx, "/v1/job/"+id)
+			if err != nil {
+				continue
+			}
+			var live nomadJob
+			if json.Unmarshal(body, &live) != nil {
+				continue
+			}
+			liveHash := live.Meta[projectionMetaKey]
+			if liveHash == "" {
+				liveHash = "missing"
+			}
+			if liveHash != meta.ProjectionHash {
+				add("P2", "drift", id, "live Nomad job projection hash mismatch",
+					fmt.Sprintf("meta=%s nomad=%s", meta.ProjectionHash, liveHash),
+					"Re-deploy the app; if someone changed the Nomad job directly, Blob will restore the intended projection")
+			}
+		}
+	}
+
+	// 6. orphan source dirs — a source belongs to any deployed job whose
 	// source-app prefix matches. App deploys land as <app>-<component>, so
 	// the source dir is "blob-app" and jobs are "blob-app-web", "blob-app-worker".
 	resp.Checked++

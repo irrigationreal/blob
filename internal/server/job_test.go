@@ -112,6 +112,28 @@ func TestRenderJobCommandOverride(t *testing.T) {
 	}
 }
 
+func TestRenderJobProjectionHash(t *testing.T) {
+	req := &api.DeployRequest{App: "hello", Form: "web-service", CPU: 200, Memory: 256, Replicas: 1, ProjectionHash: "sha256:test"}
+	job := renderJob(req, "img:1", 8080, "hello.example.com", "dc1", "hello")
+	if !strings.Contains(job, `blob_projection_hash = "sha256:test"`) {
+		t.Fatalf("job missing projection hash:\n%s", job)
+	}
+	if projectionHashFromJobFile(job) != "sha256:test" {
+		t.Fatalf("could not extract projection hash from job:\n%s", job)
+	}
+}
+
+func TestProjectionHashChangesWithManifestProjection(t *testing.T) {
+	req := &api.DeployRequest{App: "hello", Form: "web-service", Port: 8080, CPU: 200, Memory: 256, Replicas: 1}
+	normalizeDeployRequestForRender(req)
+	a := hashJobProjection(req, "img:1", 8080, "hello.example.com", "dc1", "hello")
+	req.Memory = 512
+	b := hashJobProjection(req, "img:1", 8080, "hello.example.com", "dc1", "hello")
+	if a == b {
+		t.Fatal("projection hash did not change when memory changed")
+	}
+}
+
 func TestRenderJobKataIsolation(t *testing.T) {
 	req := &api.DeployRequest{
 		App: "secure", Form: "web-service", CPU: 100, Memory: 128, Replicas: 1, Isolation: "kata",
