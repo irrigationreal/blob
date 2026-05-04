@@ -129,11 +129,14 @@ func (s *Server) requiredScope(r *http.Request) string {
 	if path == "/v1/whoami" {
 		return ""
 	}
-	if strings.HasPrefix(path, "/v1/identity") {
+	if strings.HasPrefix(path, "/ui/identity") || strings.HasPrefix(path, "/v1/identity") {
 		return "identity:admin"
 	}
-	if strings.HasPrefix(path, "/v1/audit") {
+	if strings.HasPrefix(path, "/ui/audit") || strings.HasPrefix(path, "/v1/audit") {
 		return "audit:read"
+	}
+	if strings.HasPrefix(path, "/ui/apps") {
+		return "apps:read"
 	}
 	if strings.HasPrefix(path, "/v1/secrets") {
 		if method == "GET" {

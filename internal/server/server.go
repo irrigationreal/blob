@@ -118,6 +118,8 @@ func removeIgnoringMissing(path string) error {
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok\n")) })
+	mux.HandleFunc("/ui", s.handleUI)
+	mux.HandleFunc("/ui/", s.handleUI)
 	mux.HandleFunc("/v1/whoami", s.handleWhoAmI)
 	mux.HandleFunc("/v1/identity", s.handleIdentityRoot)
 	mux.HandleFunc("/v1/identity/tokens", s.handleIdentityTokens)
