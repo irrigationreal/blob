@@ -93,6 +93,10 @@ Usage:
   blob status-pages list
   blob status-pages show <app>
   blob status-pages disable <app> [--yes]
+  blob status-pages incident open <app> --title T [--message M] [--impact minor|major|critical|maintenance]
+  blob status-pages incident update <id> [--title T] [--message M] [--impact I]
+  blob status-pages incident resolve <id> [--message M]
+  blob status-pages incident list [--app APP]
 
   blob monitors add <app> [--path P] [--interval S] [--webhook URL]
   blob monitors list
@@ -212,7 +216,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.41.0"
+var version = "0.42.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -380,6 +384,18 @@ func parseFlags(args []string) map[string]string {
 
 func positional(flags map[string]string, idx int) string { return flags["_"+strconv.Itoa(idx)] }
 func atoi(s string) int                                  { n, _ := strconv.Atoi(s); return n }
+
+func confirmUnlessYes(flags map[string]string, want, format string, args ...any) {
+	if flags["yes"] == "true" {
+		return
+	}
+	fmt.Printf(format, args...)
+	var line string
+	fmt.Fscanln(os.Stdin, &line)
+	if line != want {
+		die("aborted")
+	}
+}
 
 func cmdInit(args []string) {
 	flags := parseFlags(args)
@@ -1569,10 +1585,12 @@ func cmdIdentityGrants(c *client.Client, args []string) {
 
 func cmdStatusPages(args []string) {
 	if len(args) == 0 {
-		die("usage: blob status-pages <enable|list|show|disable> ...")
+		die("usage: blob status-pages <enable|list|show|disable|incident> ...")
 	}
 	c := mustClient()
 	switch args[0] {
+	case "incident", "incidents":
+		cmdStatusPageIncidents(c, args[1:])
 	case "enable":
 		flags := parseFlags(args[1:])
 		app := positional(flags, 0)
@@ -1616,14 +1634,7 @@ func cmdStatusPages(args []string) {
 		if app == "" {
 			die("usage: blob status-pages disable <app> [--yes]")
 		}
-		if flags["yes"] != "true" {
-			fmt.Printf("disable status page for %q? type the app name to confirm: ", app)
-			var line string
-			fmt.Fscanln(os.Stdin, &line)
-			if line != app {
-				die("aborted")
-			}
-		}
+		confirmUnlessYes(flags, app, "disable status page for %q? type the app name to confirm: ", app)
 		if err := c.DisableStatusPage(context.Background(), app); err != nil {
 			die("%v", err)
 		}
@@ -1633,33 +1644,110 @@ func cmdStatusPages(args []string) {
 	}
 }
 
+func cmdStatusPageIncidents(c *client.Client, args []string) {
+	if len(args) == 0 {
+		die("usage: blob status-pages incident <open|update|resolve|list> ...")
+	}
+	switch args[0] {
+	case "open":
+		flags := parseFlags(args[1:])
+		app := positional(flags, 0)
+		if app == "" || strings.TrimSpace(flags["title"]) == "" {
+			die("usage: blob status-pages incident open <app> --title T [--message M] [--impact minor|major|critical|maintenance]")
+		}
+		out, err := c.OpenStatusPageIncident(context.Background(), &api.OpenStatusPageIncidentRequest{App: app, Title: flags["title"], Message: flags["message"], Impact: flags["impact"]})
+		if err != nil {
+			die("%v", err)
+		}
+		printStatusIncident(out.Incident)
+	case "update":
+		flags := parseFlags(args[1:])
+		id := positional(flags, 0)
+		if id == "" || (strings.TrimSpace(flags["title"]) == "" && strings.TrimSpace(flags["message"]) == "" && strings.TrimSpace(flags["impact"]) == "") {
+			die("usage: blob status-pages incident update <id> [--title T] [--message M] [--impact I]")
+		}
+		out, err := c.UpdateStatusPageIncident(context.Background(), id, &api.UpdateStatusPageIncidentRequest{Title: flags["title"], Message: flags["message"], Impact: flags["impact"]})
+		if err != nil {
+			die("%v", err)
+		}
+		printStatusIncident(out.Incident)
+	case "resolve":
+		flags := parseFlags(args[1:])
+		id := positional(flags, 0)
+		if id == "" {
+			die("usage: blob status-pages incident resolve <id> [--message M]")
+		}
+		out, err := c.ResolveStatusPageIncident(context.Background(), id, &api.ResolveStatusPageIncidentRequest{Message: flags["message"]})
+		if err != nil {
+			die("%v", err)
+		}
+		printStatusIncident(out.Incident)
+	case "list", "ls":
+		flags := parseFlags(args[1:])
+		app := firstNonEmpty(flags["app"], positional(flags, 0))
+		out, err := c.ListStatusPageIncidents(context.Background(), app)
+		if err != nil {
+			die("%v", err)
+		}
+		if len(out.Incidents) == 0 {
+			fmt.Println("no incidents")
+			return
+		}
+		fmt.Printf("%-32s %-24s %-10s %-12s %-32s %s\n", "ID", "APP", "STATUS", "IMPACT", "TITLE", "UPDATED")
+		for _, incident := range out.Incidents {
+			fmt.Printf("%-32s %-24s %-10s %-12s %-32s %s\n", incident.ID, incident.App, incident.Status, incident.Impact, truncateCell(incident.Title, 32), incident.UpdatedAt.Format(time.RFC3339))
+		}
+	default:
+		die("unknown status-pages incident subcommand: %s", args[0])
+	}
+}
+
+func printStatusIncident(incident api.StatusPageIncident) {
+	fmt.Printf("id:       %s\n", incident.ID)
+	fmt.Printf("app:      %s\n", incident.App)
+	fmt.Printf("status:   %s\n", incident.Status)
+	fmt.Printf("impact:   %s\n", incident.Impact)
+	fmt.Printf("title:    %s\n", incident.Title)
+	if len(incident.Updates) > 0 {
+		latest := incident.Updates[len(incident.Updates)-1]
+		fmt.Printf("message:  %s\n", latest.Message)
+	}
+	fmt.Printf("updated:  %s\n", incident.UpdatedAt.Format(time.RFC3339))
+}
+
+func truncateCell(s string, max int) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	if len(s) > max {
+		if max <= 3 {
+			return s[:max]
+		}
+		return s[:max-3] + "..."
+	}
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
 func printStatusPage(out *api.StatusPageResponse) {
 	fmt.Printf("app:      %s\n", out.Binding.App)
 	fmt.Printf("url:      %s\n", out.Binding.URL)
 	fmt.Printf("overall:  %s\n", out.Status.Overall)
 	fmt.Printf("app:      %s (%d replicas)\n", out.Status.AppStatus.Status, out.Status.AppStatus.Replicas)
-	fmt.Printf("route:    %s", out.Status.RouteHealth.Status)
-	if out.Status.RouteHealth.StatusCode != 0 {
-		fmt.Printf(" HTTP %d", out.Status.RouteHealth.StatusCode)
+	fmt.Printf("route:    %s\n", formatRouteHealth(out.Status.RouteHealth))
+	if len(out.Status.Incidents) > 0 {
+		fmt.Println("incidents:")
+		for _, incident := range out.Status.Incidents {
+			fmt.Printf("  %s: %s/%s %s\n", incident.ID, incident.Status, incident.Impact, incident.Title)
+			if incident.LatestMessage != "" {
+				fmt.Printf("       %s\n", incident.LatestMessage)
+			}
+		}
 	}
-	if out.Status.RouteHealth.LatencyMS != 0 {
-		fmt.Printf(" %dms", out.Status.RouteHealth.LatencyMS)
-	}
-	if out.Status.RouteHealth.Error != "" {
-		fmt.Printf(" - %s", out.Status.RouteHealth.Error)
-	}
-	fmt.Println()
 	if len(out.Status.Monitors) > 0 {
 		fmt.Println("monitors:")
 		for _, mon := range out.Status.Monitors {
-			fmt.Printf("  %s: %s", mon.Name, mon.Health.Status)
-			if mon.Health.StatusCode != 0 {
-				fmt.Printf(" HTTP %d", mon.Health.StatusCode)
-			}
-			if mon.Health.Error != "" {
-				fmt.Printf(" - %s", mon.Health.Error)
-			}
-			fmt.Println()
+			fmt.Printf("  %s: %s\n", mon.Name, formatRouteHealth(mon.Health))
 		}
 	}
 	if len(out.Status.DoctorIssues) == 0 {
@@ -1677,6 +1765,24 @@ func printStatusPage(out *api.StatusPageResponse) {
 			fmt.Printf("       %s\n", issue.Detail)
 		}
 	}
+}
+
+func formatRouteHealth(health api.RouteHealth) string {
+	if health.Status == "" {
+		return "not checked"
+	}
+	var b strings.Builder
+	b.WriteString(health.Status)
+	if health.StatusCode != 0 {
+		fmt.Fprintf(&b, " HTTP %d", health.StatusCode)
+	}
+	if health.LatencyMS != 0 {
+		fmt.Fprintf(&b, " %dms", health.LatencyMS)
+	}
+	if health.Error != "" {
+		fmt.Fprintf(&b, " - %s", health.Error)
+	}
+	return b.String()
 }
 
 func cmdMonitors(args []string) {
@@ -1738,14 +1844,7 @@ func cmdMonitors(args []string) {
 		if name == "" {
 			die("usage: blob monitors remove <name> [--yes]")
 		}
-		if flags["yes"] != "true" {
-			fmt.Printf("remove monitor %q? type the monitor name to confirm: ", name)
-			var line string
-			fmt.Fscanln(os.Stdin, &line)
-			if line != name {
-				die("aborted")
-			}
-		}
+		confirmUnlessYes(flags, name, "remove monitor %q? type the monitor name to confirm: ", name)
 		if err := c.RemoveMonitor(context.Background(), name); err != nil {
 			die("%v", err)
 		}
@@ -1765,22 +1864,12 @@ func printMonitor(mon api.Monitor) {
 	fmt.Printf("interval: %ds\n", mon.IntervalSeconds)
 	fmt.Printf("timeout:  %ds\n", mon.TimeoutSeconds)
 	fmt.Printf("expect:   HTTP %d\n", mon.ExpectedStatus)
-	fmt.Printf("status:   %s", mon.LastCheck.Status)
-	if mon.LastCheck.StatusCode != 0 {
-		fmt.Printf(" HTTP %d", mon.LastCheck.StatusCode)
-	}
-	if mon.LastCheck.LatencyMS != 0 {
-		fmt.Printf(" %dms", mon.LastCheck.LatencyMS)
-	}
-	if mon.LastCheck.Error != "" {
-		fmt.Printf(" - %s", mon.LastCheck.Error)
-	}
-	fmt.Println()
+	fmt.Printf("status:   %s\n", formatRouteHealth(mon.LastCheck))
 	fmt.Printf("failures: %d\n", mon.ConsecutiveFailures)
 	if !mon.LastCheck.CheckedAt.IsZero() {
 		fmt.Printf("checked:  %s\n", mon.LastCheck.CheckedAt.Format(time.RFC3339))
 	}
-	if mon.AlertWebhook != "" {
+	if mon.AlertWebhookConfigured {
 		fmt.Println("webhook:  configured")
 	}
 }
@@ -1852,14 +1941,7 @@ func cmdPlugins(args []string) {
 		if app == "" {
 			die("usage: blob plugins remove <app> [--yes]")
 		}
-		if flags["yes"] != "true" {
-			fmt.Printf("remove plugin config for %q? type the app name to confirm: ", app)
-			var line string
-			fmt.Fscanln(os.Stdin, &line)
-			if line != app {
-				die("aborted")
-			}
-		}
+		confirmUnlessYes(flags, app, "remove plugin config for %q? type the app name to confirm: ", app)
 		if err := c.DeletePlugin(context.Background(), app); err != nil {
 			die("%v", err)
 		}

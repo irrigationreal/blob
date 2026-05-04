@@ -231,6 +231,42 @@ func (c *Client) DisableStatusPage(ctx context.Context, app string) error {
 	return c.do(ctx, "DELETE", "/v1/status-pages/"+url.PathEscape(app), nil, nil)
 }
 
+func (c *Client) ListStatusPageIncidents(ctx context.Context, app string) (*api.ListStatusPageIncidentsResponse, error) {
+	path := "/v1/status-pages/incidents"
+	if app != "" {
+		path += "?app=" + url.QueryEscape(app)
+	}
+	out := &api.ListStatusPageIncidentsResponse{}
+	if err := c.do(ctx, "GET", path, nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) OpenStatusPageIncident(ctx context.Context, req *api.OpenStatusPageIncidentRequest) (*api.StatusPageIncidentResponse, error) {
+	out := &api.StatusPageIncidentResponse{}
+	if err := c.do(ctx, "POST", "/v1/status-pages/incidents", req, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) UpdateStatusPageIncident(ctx context.Context, id string, req *api.UpdateStatusPageIncidentRequest) (*api.StatusPageIncidentResponse, error) {
+	out := &api.StatusPageIncidentResponse{}
+	if err := c.do(ctx, "PATCH", "/v1/status-pages/incidents/"+url.PathEscape(id), req, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) ResolveStatusPageIncident(ctx context.Context, id string, req *api.ResolveStatusPageIncidentRequest) (*api.StatusPageIncidentResponse, error) {
+	out := &api.StatusPageIncidentResponse{}
+	if err := c.do(ctx, "POST", "/v1/status-pages/incidents/"+url.PathEscape(id)+"/resolve", req, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *Client) ListMonitors(ctx context.Context) (*api.ListMonitorsResponse, error) {
 	out := &api.ListMonitorsResponse{}
 	if err := c.do(ctx, "GET", "/v1/monitors", nil, out); err != nil {

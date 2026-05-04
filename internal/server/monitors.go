@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/darvell/blob/internal/api"
@@ -24,15 +25,20 @@ const (
 	defaultMonitorTimeoutSeconds  = 5
 	defaultMonitorExpectedStatus  = 200
 	monitorLoopInterval           = 15 * time.Second
+	monitorCheckConcurrency       = 4
 )
 
 type monitorRunner struct {
-	srv  *Server
-	stop chan struct{}
+	srv    *Server
+	ctx    context.Context
+	cancel context.CancelFunc
+	stop   chan struct{}
+	done   chan struct{}
 }
 
 func newMonitorRunner(s *Server) *monitorRunner {
-	return &monitorRunner{srv: s, stop: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &monitorRunner{srv: s, ctx: ctx, cancel: cancel, stop: make(chan struct{}), done: make(chan struct{})}
 }
 
 func (m *monitorRunner) Start() {
@@ -40,14 +46,17 @@ func (m *monitorRunner) Start() {
 }
 
 func (m *monitorRunner) Stop() {
+	m.cancel()
 	select {
 	case <-m.stop:
 	default:
 		close(m.stop)
 	}
+	<-m.done
 }
 
 func (m *monitorRunner) loop() {
+	defer close(m.done)
 	t := time.NewTicker(monitorLoopInterval)
 	defer t.Stop()
 	for {
@@ -61,19 +70,33 @@ func (m *monitorRunner) loop() {
 }
 
 func (m *monitorRunner) tick() {
-	monitors, err := m.srv.listMonitors()
+	monitors, err := m.srv.loadAllMonitors()
 	if err != nil {
 		return
 	}
 	now := time.Now().UTC()
-	for _, mon := range monitors.Monitors {
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, monitorCheckConcurrency)
+	for _, mon := range monitors {
+		mon := mon
 		if !mon.Enabled || !monitorDue(&mon, now) {
 			continue
 		}
-		if _, err := m.srv.checkMonitor(context.Background(), mon.Name); err != nil {
-			stdLog("monitor[%s]: %v", mon.Name, err)
+		select {
+		case <-m.ctx.Done():
+			return
+		case sem <- struct{}{}:
 		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if _, err := m.srv.checkLoadedMonitor(m.ctx, &mon); err != nil {
+				stdLog("monitor[%s]: %v", mon.Name, err)
+			}
+		}()
 	}
+	wg.Wait()
 }
 
 func monitorDue(mon *api.Monitor, now time.Time) bool {
@@ -134,7 +157,7 @@ func (s *Server) handleMonitorItem(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 404, "monitor not found")
 			return
 		}
-		writeJSON(w, 200, &api.MonitorResponse{Monitor: *mon})
+		writeJSON(w, 200, &api.MonitorResponse{Monitor: publicMonitor(mon)})
 	case "DELETE":
 		if err := s.removeMonitor(name); err != nil {
 			writeErr(w, 404, err.Error())
@@ -152,13 +175,13 @@ func (s *Server) addMonitor(ctx context.Context, req *api.AddMonitorRequest) (*a
 		return nil, errors.New("invalid monitor name")
 	}
 	app := strings.TrimSpace(req.App)
-	if app == "" {
+	url := strings.TrimSpace(req.URL)
+	if url == "" && app == "" {
 		app = name
 	}
 	if app != "" && !validName(app) {
 		return nil, errors.New("invalid app name")
 	}
-	url := strings.TrimSpace(req.URL)
 	if url == "" {
 		st, err := s.appStatus(ctx, app)
 		if err != nil {
@@ -220,25 +243,41 @@ func (s *Server) addMonitor(ctx context.Context, req *api.AddMonitorRequest) (*a
 		mon.LastAlertStatus = existing.LastAlertStatus
 		mon.LastAlertAt = existing.LastAlertAt
 	}
-	if err := s.saveMonitor(mon); err != nil {
-		return nil, err
+	if !enabled {
+		if err := s.saveMonitor(mon); err != nil {
+			return nil, err
+		}
+		return &api.MonitorResponse{Monitor: publicMonitor(mon)}, nil
 	}
-	checked, err := s.checkMonitor(ctx, name)
+	checked, err := s.checkLoadedMonitor(ctx, mon)
 	if err != nil {
 		return nil, err
 	}
-	return &api.MonitorResponse{Monitor: *checked}, nil
+	return &api.MonitorResponse{Monitor: publicMonitor(checked)}, nil
 }
 
 func (s *Server) listMonitors() (*api.ListMonitorsResponse, error) {
-	out := &api.ListMonitorsResponse{}
+	monitors, err := s.loadAllMonitors()
+	if err != nil {
+		return nil, err
+	}
+	out := &api.ListMonitorsResponse{Monitors: make([]api.Monitor, 0, len(monitors))}
+	for _, mon := range monitors {
+		out.Monitors = append(out.Monitors, publicMonitor(&mon))
+	}
+	sort.Slice(out.Monitors, func(i, j int) bool { return out.Monitors[i].Name < out.Monitors[j].Name })
+	return out, nil
+}
+
+func (s *Server) loadAllMonitors() ([]api.Monitor, error) {
 	entries, err := os.ReadDir(s.monitorsDir())
 	if err != nil {
 		if os.IsNotExist(err) {
-			return out, nil
+			return nil, nil
 		}
 		return nil, err
 	}
+	monitors := make([]api.Monitor, 0, len(entries))
 	for _, e := range entries {
 		if !strings.HasSuffix(e.Name(), ".json") {
 			continue
@@ -247,10 +286,16 @@ func (s *Server) listMonitors() (*api.ListMonitorsResponse, error) {
 		if err != nil {
 			continue
 		}
-		out.Monitors = append(out.Monitors, *mon)
+		monitors = append(monitors, *mon)
 	}
-	sort.Slice(out.Monitors, func(i, j int) bool { return out.Monitors[i].Name < out.Monitors[j].Name })
-	return out, nil
+	return monitors, nil
+}
+
+func publicMonitor(mon *api.Monitor) api.Monitor {
+	out := *mon
+	out.AlertWebhookConfigured = mon.AlertWebhook != ""
+	out.AlertWebhook = ""
+	return out
 }
 
 func (s *Server) loadMonitor(name string) (*api.Monitor, error) {
@@ -277,10 +322,13 @@ func (s *Server) saveMonitor(mon *api.Monitor) error {
 }
 
 func (s *Server) removeMonitor(name string) error {
-	if _, err := s.loadMonitor(name); err != nil {
-		return errors.New("monitor not found")
+	if err := os.Remove(s.monitorPath(name)); err != nil {
+		if os.IsNotExist(err) {
+			return errors.New("monitor not found")
+		}
+		return err
 	}
-	return removeIgnoringMissing(s.monitorPath(name))
+	return nil
 }
 
 func (s *Server) checkMonitor(ctx context.Context, name string) (*api.Monitor, error) {
@@ -288,6 +336,10 @@ func (s *Server) checkMonitor(ctx context.Context, name string) (*api.Monitor, e
 	if err != nil {
 		return nil, err
 	}
+	return s.checkLoadedMonitor(ctx, mon)
+}
+
+func (s *Server) checkLoadedMonitor(ctx context.Context, mon *api.Monitor) (*api.Monitor, error) {
 	previous := monitorHealthState(mon.LastCheck)
 	health := probeMonitor(ctx, mon)
 	mon.LastCheck = health
@@ -375,10 +427,18 @@ func sendMonitorAlert(ctx context.Context, mon *api.Monitor, previous, current s
 	return nil
 }
 
+func (s *Server) publicMonitorStatusesForApp(app string) ([]api.PublicMonitorStatus, error) {
+	monitors, err := s.loadAllMonitors()
+	if err != nil {
+		return nil, err
+	}
+	return publicMonitorStatuses(monitors, app), nil
+}
+
 func publicMonitorStatuses(all []api.Monitor, app string) []api.PublicMonitorStatus {
 	out := make([]api.PublicMonitorStatus, 0)
 	for _, mon := range all {
-		if mon.App != app {
+		if mon.App != app || !mon.Enabled {
 			continue
 		}
 		out = append(out, api.PublicMonitorStatus{

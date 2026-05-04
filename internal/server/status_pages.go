@@ -63,10 +63,7 @@ func (s *Server) saveStatusPage(p *api.StatusPageBinding) error {
 }
 
 func (s *Server) deleteStatusPage(app string) error {
-	if err := os.Remove(s.statusPageFile(app)); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
+	return removeIgnoringMissing(s.statusPageFile(app))
 }
 
 func (s *Server) handleStatusPages(w http.ResponseWriter, r *http.Request) {
@@ -234,11 +231,14 @@ func (s *Server) publicStatusPage(ctx context.Context, app string) (*api.PublicS
 		out.AppStatus = api.PublicAppStatus{App: app, Status: "missing"}
 		out.RouteHealth = api.RouteHealth{Status: "skipped", Error: "app is missing"}
 	}
-	if monitors, err := s.listMonitors(); err == nil {
-		out.Monitors = publicMonitorStatuses(monitors.Monitors, app)
+	if incidents, err := s.listStatusIncidents(app, true); err == nil {
+		out.Incidents = publicStatusIncidents(incidents.Incidents)
+	}
+	if monitors, err := s.publicMonitorStatusesForApp(app); err == nil {
+		out.Monitors = monitors
 	}
 	out.DoctorIssues = s.publicDoctorIssues(ctx, app)
-	out.Overall = overallStatus(out.AppStatus, out.RouteHealth, out.DoctorIssues, out.Monitors)
+	out.Overall = overallStatus(out.AppStatus, out.RouteHealth, out.DoctorIssues, out.Incidents, out.Monitors)
 	return out, nil
 }
 
@@ -347,16 +347,45 @@ func isPublicGlobalIssue(issue api.DoctorIssue) bool {
 	return issue.Severity == "P1" || issue.Severity == "P2"
 }
 
+func publicStatusIncidents(incidents []api.StatusPageIncident) []api.PublicStatusPageIncident {
+	out := make([]api.PublicStatusPageIncident, 0, len(incidents))
+	for _, incident := range incidents {
+		p := api.PublicStatusPageIncident{
+			ID:        incident.ID,
+			App:       incident.App,
+			Title:     sanitizePublicText(incident.Title),
+			Status:    incident.Status,
+			Impact:    incident.Impact,
+			CreatedAt: incident.CreatedAt,
+			UpdatedAt: incident.UpdatedAt,
+		}
+		if !incident.ResolvedAt.IsZero() {
+			resolvedAt := incident.ResolvedAt
+			p.ResolvedAt = &resolvedAt
+		}
+		if len(incident.Updates) > 0 {
+			p.LatestMessage = sanitizePublicText(incident.Updates[len(incident.Updates)-1].Message)
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
 func sanitizePublicText(s string) string {
 	return uuidLikeRE.ReplaceAllString(s, "<redacted-id>")
 }
 
-func overallStatus(app api.PublicAppStatus, route api.RouteHealth, issues []api.PublicDoctorIssue, monitors []api.PublicMonitorStatus) string {
+func overallStatus(app api.PublicAppStatus, route api.RouteHealth, issues []api.PublicDoctorIssue, incidents []api.PublicStatusPageIncident, monitors []api.PublicMonitorStatus) string {
 	if app.Status == "dead" || app.Status == "missing" {
 		return "down"
 	}
 	for _, issue := range issues {
 		if issue.Severity == "P1" {
+			return "down"
+		}
+	}
+	for _, incident := range incidents {
+		if incident.Open() && incident.Impact == "critical" {
 			return "down"
 		}
 	}
@@ -370,6 +399,11 @@ func overallStatus(app api.PublicAppStatus, route api.RouteHealth, issues []api.
 	}
 	if route.Status == "unreachable" || route.Status == "failing" {
 		return "degraded"
+	}
+	for _, incident := range incidents {
+		if incident.Open() && incident.Impact != "maintenance" {
+			return "degraded"
+		}
 	}
 	for _, issue := range issues {
 		if issue.Severity == "P2" {
@@ -392,6 +426,17 @@ func renderStatusPageHTML(p *api.PublicStatusPage) string {
 	fmt.Fprintf(&b, "<style>body{font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,sans-serif;margin:0;background:#f6f7f9;color:#111827}.wrap{max-width:760px;margin:48px auto;padding:0 20px}.card{background:white;border:1px solid #e5e7eb;border-radius:18px;padding:24px;box-shadow:0 8px 30px rgba(15,23,42,.06)}.pill{display:inline-block;border-radius:999px;padding:6px 12px;color:white;background:%s;font-weight:700}.muted{color:#667085}.grid{display:grid;grid-template-columns:160px 1fr;gap:10px;margin-top:22px}.issues{margin-top:24px}.issue{border-top:1px solid #e5e7eb;padding:12px 0}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}</style></head><body><main class=\"wrap\"><section class=\"card\">", statusColor)
 	fmt.Fprintf(&b, "<p class=\"muted\">The Blob status page</p><h1>%s</h1><span class=\"pill\">%s</span>", html.EscapeString(p.App), html.EscapeString(p.Overall))
 	fmt.Fprintf(&b, "<div class=\"grid\"><div class=\"muted\">app status</div><div>%s</div><div class=\"muted\">route</div><div>%s, HTTP %d, %dms</div><div class=\"muted\">url</div><div><a href=\"%s\">%s</a></div><div class=\"muted\">generated</div><div class=\"mono\">%s</div></div>", html.EscapeString(p.AppStatus.Status), html.EscapeString(p.RouteHealth.Status), p.RouteHealth.StatusCode, p.RouteHealth.LatencyMS, html.EscapeString(p.AppStatus.URL), html.EscapeString(p.AppStatus.URL), html.EscapeString(p.GeneratedAt.Format(time.RFC3339)))
+	if len(p.Incidents) > 0 {
+		fmt.Fprintf(&b, "<div class=\"issues\"><h2>Incidents</h2>")
+		for _, incident := range p.Incidents {
+			fmt.Fprintf(&b, "<div class=\"issue\"><strong>%s</strong> <span class=\"muted\">%s / %s</span>", html.EscapeString(incident.Title), html.EscapeString(incident.Status), html.EscapeString(incident.Impact))
+			if incident.LatestMessage != "" {
+				fmt.Fprintf(&b, "<p class=\"muted\">%s</p>", html.EscapeString(incident.LatestMessage))
+			}
+			fmt.Fprintf(&b, "</div>")
+		}
+		fmt.Fprintf(&b, "</div>")
+	}
 	if len(p.Monitors) > 0 {
 		fmt.Fprintf(&b, "<div class=\"issues\"><h2>Monitors</h2>")
 		for _, mon := range p.Monitors {

@@ -85,7 +85,7 @@ The same platform host runs these via `blob import compose|procfile|fly` → `bl
 | **Volumes**: per-app Docker named volumes                      | shipped  |
 | **Nodes**: list, drain, undrain, generate join script          | shipped  |
 | **Resource graph + placement preflight**: persisted Nomad node/allocation capacity, `blob nodes recommend`, and impossible deploy refusal before Nomad scheduling | shipped |
-| **Status pages**: `blob status-pages enable <app>` publishes public HTML + JSON without alloc IDs or secrets | shipped |
+| **Status pages**: public HTML + JSON with route health, monitors, incidents, and sanitized doctor issues | shipped |
 | **Uptime monitors**: persisted HTTP checks with optional alert webhooks and status-page integration | shipped |
 | **Audit log**: append-only hash-chained events for authenticated mutating API actions | shipped |
 | **Identity/RBAC**: scoped service tokens with per-token grants | shipped |

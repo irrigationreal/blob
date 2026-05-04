@@ -144,6 +144,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/v1/audit", s.handleAudit)
 	mux.HandleFunc("/v1/audit/", s.handleAuditItem)
 	mux.HandleFunc("/v1/status-pages", s.handleStatusPages)
+	mux.HandleFunc("/v1/status-pages/incidents", s.handleStatusPageIncidents)
+	mux.HandleFunc("/v1/status-pages/incidents/", s.handleStatusPageIncidentItem)
 	mux.HandleFunc("/v1/status-pages/", s.handleStatusPagesItem)
 	mux.HandleFunc("/status/", s.handlePublicStatusPage)
 	mux.HandleFunc("/v1/monitors", s.handleMonitors)
