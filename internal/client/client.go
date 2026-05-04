@@ -831,3 +831,41 @@ func (c *Client) MongoURL(ctx context.Context, name string) (string, error) {
 func (c *Client) DestroyMongo(ctx context.Context, name string) error {
 	return c.do(ctx, "DELETE", "/v1/mongodb/"+url.PathEscape(name), nil, nil)
 }
+
+// --- ScyllaDB (v0.20) ---
+
+func (c *Client) ListScylla(ctx context.Context) (*api.ListScyllaResponse, error) {
+	out := &api.ListScyllaResponse{}
+	if err := c.do(ctx, "GET", "/v1/scylladb", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) CreateScylla(ctx context.Context, req *api.CreateScyllaRequest) (*api.Scylla, error) {
+	out := &api.Scylla{}
+	if err := c.do(ctx, "POST", "/v1/scylladb", req, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) GetScylla(ctx context.Context, name string) (*api.Scylla, error) {
+	out := &api.Scylla{}
+	if err := c.do(ctx, "GET", "/v1/scylladb/"+url.PathEscape(name), nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) ScyllaURL(ctx context.Context, name string) (string, error) {
+	out := &api.ScyllaURL{}
+	if err := c.do(ctx, "GET", "/v1/scylladb/"+url.PathEscape(name)+"/url", nil, out); err != nil {
+		return "", err
+	}
+	return out.URL, nil
+}
+
+func (c *Client) DestroyScylla(ctx context.Context, name string) error {
+	return c.do(ctx, "DELETE", "/v1/scylladb/"+url.PathEscape(name), nil, nil)
+}

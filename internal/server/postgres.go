@@ -378,6 +378,7 @@ func (s *Server) resolveServices(req *api.DeployRequest) error {
 	mysqlPrimary := true
 	clickhousePrimary := true
 	mongoPrimary := true
+	scyllaPrimary := true
 	for _, svc := range req.Services {
 		// Try project binding first ("instance.project").
 		if instance, project := parseProjectBinding(svc); project != "" {
@@ -467,6 +468,9 @@ func (s *Server) resolveServices(req *api.DeployRequest) error {
 			continue
 		}
 		if s.lookupMongoForBinding(svc, req.Env, &mongoPrimary) {
+			continue
+		}
+		if s.lookupScyllaForBinding(svc, req.Env, &scyllaPrimary) {
 			continue
 		}
 		return fmt.Errorf("service %q not found", svc)

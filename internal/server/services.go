@@ -132,6 +132,14 @@ func (s *Server) listServices(ctx context.Context) (*api.ListServicesResponse, e
 			})
 		}
 	}
+	if sc, err := s.listScylla(ctx); err == nil {
+		for _, m := range sc.Scylla {
+			out.Services = append(out.Services, api.ServiceSummary{
+				Kind: "scylladb", Name: m.Name, Status: m.Status, Host: m.Host,
+				Ports: []int{m.Port}, URLs: []string{m.URLMasked},
+			})
+		}
+	}
 
 	sort.Slice(out.Services, func(i, j int) bool {
 		if out.Services[i].Kind != out.Services[j].Kind {

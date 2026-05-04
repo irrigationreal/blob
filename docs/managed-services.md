@@ -578,3 +578,45 @@ The mongo image's `docker-entrypoint` only creates the root user from `MONGO_INI
 UFW: open `15700:15800/tcp` from the docker bridge so app containers can reach the data plane.
 
 Single-node only; no replica set, no sharding. That's the v0.20+ conversation.
+
+## ScyllaDB (v0.20): managed wide-column
+
+Single-node `scylladb/scylla:5.4` — Cassandra-compatible CQL on port 9042 (host port 15800+). Scylla's defaults grab every CPU and most of the box's RAM; we always pass `--developer-mode 1 --memory 1G --smp 1 --overprovisioned 1` so it can co-exist with the rest of the platform.
+
+```sh
+blob scylladb create my-scylla                  # creates instance + keyspace 'my_scylla'
+blob scylladb create events --keyspace events
+blob scylladb url my-scylla                     # cassandra:// pseudo-URI with password
+blob scylladb list
+blob scylladb destroy my-scylla                 # Docker volume blob-scylladb-my-scylla preserved
+```
+
+Env injected (first scylladb binding wins canonical slot):
+
+```
+SCYLLA_URL          cassandra://blob:<pass>@<host>:<port>/<keyspace>
+SCYLLA_HOSTS
+SCYLLA_PORT
+SCYLLA_USER
+SCYLLA_PASSWORD
+SCYLLA_KEYSPACE
+
+# Cassandra-driver-conventional aliases
+CASSANDRA_HOSTS
+CASSANDRA_PORT
+CASSANDRA_USER
+CASSANDRA_PASSWORD
+CASSANDRA_KEYSPACE
+```
+
+Additional bindings get name-prefixed env: `<NAME>_URL`, `<NAME>_HOSTS`, etc.
+
+Port pool 15800–15899. Persistent `/var/lib/scylla` on Docker named volume `blob-scylladb-<name>`.
+
+The container starts with `PasswordAuthenticator` + `CassandraAuthorizer` enabled. Scylla bootstraps the `system_auth` keyspace a few seconds after CQL accepts connections, which is why `ensureScyllaUser` retries cqlsh for up to 90s after the Nomad health check goes green. After the first successful pass, the keyspace and `(blob, <password>)` role exist with `ALL` permissions on the keyspace; the bootstrap user `cassandra/cassandra` is left untouched (rotate it manually if you care).
+
+Default boot is **slow** — even with developer-mode, expect 60–120s before CQL is reachable. Plan accordingly.
+
+UFW: open `15800:15900/tcp` from the docker bridge so app containers can reach the data plane.
+
+Single-node only. Multi-node Scylla rings (anti-entropy, gossip, vnodes) are a v0.30+ conversation.

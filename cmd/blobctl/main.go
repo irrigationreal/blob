@@ -140,6 +140,11 @@ Usage:
   blob mongodb url <name>                         Print full mongodb:// URI (with password)
   blob mongodb destroy <name> [--yes]
 
+  blob scylladb list
+  blob scylladb create <name> [--version V] [--keyspace K]
+  blob scylladb url <name>                        Print cassandra:// pseudo-URI (with password)
+  blob scylladb destroy <name> [--yes]
+
   blob autoscale list
   blob autoscale set <app> --min N --max M --metric cpu|memory|http_qps --target P
                                                   [--cooldown-up 60s] [--cooldown-down 180s]
@@ -150,7 +155,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.19.0"
+var version = "0.20.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -240,6 +245,8 @@ func main() {
 		cmdClickHouse(args)
 	case "mongodb", "mongo":
 		cmdMongo(args)
+	case "scylladb", "scylla":
+		cmdScylla(args)
 	case "doctor":
 		cmdDoctor()
 	case "whoami":
@@ -2622,5 +2629,81 @@ func cmdMongo(args []string) {
 		fmt.Printf("destroyed mongodb %q\n", name)
 	default:
 		die("unknown mongodb subcommand: %s", args[0])
+	}
+}
+
+func cmdScylla(args []string) {
+	if len(args) == 0 {
+		die("usage: blob scylladb <list|create|url|destroy> ...")
+	}
+	c := mustClient()
+	switch args[0] {
+	case "list", "ls":
+		out, err := c.ListScylla(context.Background())
+		if err != nil {
+			die("%v", err)
+		}
+		if len(out.Scylla) == 0 {
+			fmt.Println("no scylladb instances")
+			return
+		}
+		fmt.Printf("%-20s %-7s %-10s %-22s %-7s %-15s %s\n", "NAME", "VERSION", "STATUS", "HOST", "PORT", "KEYSPACE", "URL")
+		for _, m := range out.Scylla {
+			fmt.Printf("%-20s %-7s %-10s %-22s %-7d %-15s %s\n",
+				m.Name, m.Version, m.Status, m.Host, m.Port, m.Keyspace, m.URLMasked)
+		}
+	case "create":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob scylladb create <name> [--version V] [--keyspace K]")
+		}
+		req := &api.CreateScyllaRequest{
+			Name:     name,
+			Version:  flags["version"],
+			Keyspace: flags["keyspace"],
+		}
+		fmt.Printf("creating scylladb %q (this can take 90-180s — scylla bootstrap is slow)...\n", name)
+		t0 := time.Now()
+		out, err := c.CreateScylla(context.Background(), req)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("ready in %s\n", time.Since(t0).Round(100*time.Millisecond))
+		fmt.Printf("  name:        %s\n  version:     %s\n  host:        %s\n  port:        %d\n  keyspace:    %s\n  user:        %s\n  url:         %s\n",
+			out.Name, out.Version, out.Host, out.Port, out.Keyspace, out.User, out.URLMasked)
+		fmt.Println()
+		fmt.Printf("Bind apps with:\n  services:\n    - %s\nApps will receive SCYLLA_URL, SCYLLA_HOSTS, SCYLLA_PORT, SCYLLA_USER,\nSCYLLA_PASSWORD, SCYLLA_KEYSPACE plus CASSANDRA_* aliases.\n", name)
+	case "url":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob scylladb url <name>")
+		}
+		u, err := c.ScyllaURL(context.Background(), name)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Println(u)
+	case "destroy", "rm":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob scylladb destroy <name>")
+		}
+		if flags["yes"] != "true" {
+			fmt.Printf("destroy scylladb %q? (Docker volume blob-scylladb-%s preserved; type the name to confirm) ", name, name)
+			var line string
+			fmt.Fscanln(os.Stdin, &line)
+			if line != name {
+				die("aborted")
+			}
+		}
+		if err := c.DestroyScylla(context.Background(), name); err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("destroyed scylladb %q\n", name)
+	default:
+		die("unknown scylladb subcommand: %s", args[0])
 	}
 }

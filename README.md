@@ -98,7 +98,6 @@ The full v1 spec ([`docs/the-blob-spec.md`](docs/the-blob-spec.md)) is the desti
 - **Multi-region** active-passive failover
 - **Status pages**, cost rollups, plugins, web console, GPU/confidential compute
 - Importers beyond compose/procfile/fly/nextjs/netlify: Helm, Render, Vercel, Nix flakes
-- Other managed services: ScyllaDB
 
 ## Setting up your own Blob
 

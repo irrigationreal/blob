@@ -153,6 +153,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/v1/clickhouse/", s.handleClickHouseItem)
 	mux.HandleFunc("/v1/mongodb", s.handleMongo)
 	mux.HandleFunc("/v1/mongodb/", s.handleMongoItem)
+	mux.HandleFunc("/v1/scylladb", s.handleScylla)
+	mux.HandleFunc("/v1/scylladb/", s.handleScyllaItem)
 	mux.HandleFunc("/v1/webhooks/setup/", s.handleWebhookSetup)
 	mux.HandleFunc("/v1/webhooks/github", s.handleWebhookGitHub)
 	mux.Handle("/metrics", promhttp.Handler())

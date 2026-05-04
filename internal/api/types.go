@@ -735,3 +735,33 @@ type ListMongoResponse struct {
 type MongoURL struct {
 	URL string `json:"url"`
 }
+
+// Managed services — ScyllaDB (v0.20)
+type Scylla struct {
+	Name      string    `json:"name"`
+	Version   string    `json:"version"`
+	Host      string    `json:"host"`
+	Port      int       `json:"port"`
+	Keyspace  string    `json:"keyspace"`
+	User      string    `json:"user"`
+	JobID     string    `json:"job_id"`
+	URLMasked string    `json:"url"` // cassandra://blob:***@host:port/ks
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type CreateScyllaRequest struct {
+	Name     string `json:"name"`
+	Version  string `json:"version,omitempty"`  // default 5.4
+	Keyspace string `json:"keyspace,omitempty"` // default = name with - → _
+	CPU      int    `json:"cpu,omitempty"`
+	Memory   int    `json:"memory,omitempty"`
+}
+
+type ListScyllaResponse struct {
+	Scylla []Scylla `json:"scylla"`
+}
+
+type ScyllaURL struct {
+	URL string `json:"url"`
+}
