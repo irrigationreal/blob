@@ -793,3 +793,41 @@ func (c *Client) ClickHouseURL(ctx context.Context, name string) (string, error)
 func (c *Client) DestroyClickHouse(ctx context.Context, name string) error {
 	return c.do(ctx, "DELETE", "/v1/clickhouse/"+url.PathEscape(name), nil, nil)
 }
+
+// --- MongoDB (v0.19) ---
+
+func (c *Client) ListMongo(ctx context.Context) (*api.ListMongoResponse, error) {
+	out := &api.ListMongoResponse{}
+	if err := c.do(ctx, "GET", "/v1/mongodb", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) CreateMongo(ctx context.Context, req *api.CreateMongoRequest) (*api.Mongo, error) {
+	out := &api.Mongo{}
+	if err := c.do(ctx, "POST", "/v1/mongodb", req, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) GetMongo(ctx context.Context, name string) (*api.Mongo, error) {
+	out := &api.Mongo{}
+	if err := c.do(ctx, "GET", "/v1/mongodb/"+url.PathEscape(name), nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) MongoURL(ctx context.Context, name string) (string, error) {
+	out := &api.MongoURL{}
+	if err := c.do(ctx, "GET", "/v1/mongodb/"+url.PathEscape(name)+"/url", nil, out); err != nil {
+		return "", err
+	}
+	return out.URL, nil
+}
+
+func (c *Client) DestroyMongo(ctx context.Context, name string) error {
+	return c.do(ctx, "DELETE", "/v1/mongodb/"+url.PathEscape(name), nil, nil)
+}

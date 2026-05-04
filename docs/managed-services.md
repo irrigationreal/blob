@@ -544,3 +544,37 @@ CLICKHOUSE_DATABASE
 Port pools: HTTP 15500–15599, native 15600–15699. UFW: open `15500:15700/tcp` from the docker bridge.
 
 Memory floor is real: ClickHouse below 1 GiB will OOM under any non-trivial query. Default `memory: 1024` per instance; bump for production-shaped workloads.
+
+## MongoDB (v0.19): managed document store
+
+Single-node `mongo:7` with one auto-provisioned database + app user per instance. Mirrors the postgres/mysql/clickhouse pattern.
+
+```sh
+blob mongodb create my-mongo                    # creates instance + database 'my-mongo'
+blob mongodb create app-mongo --database app
+blob mongodb url my-mongo                       # prints full mongodb:// URI with password
+blob mongodb list
+blob mongodb destroy my-mongo                   # Docker volume blob-mongodb-my-mongo preserved
+```
+
+Env injected into bound apps (first mongodb binding wins the canonical slot):
+
+```
+MONGODB_URL       mongodb://blob:<pass>@<host>:<port>/<db>?authSource=<db>
+MONGO_URL         (alias for the same URI — used by mongoose/meteor)
+MONGODB_HOST
+MONGODB_PORT
+MONGODB_USER
+MONGODB_PASSWORD
+MONGODB_DATABASE
+```
+
+Additional bindings get name-prefixed env: `<NAME>_URL`, `<NAME>_HOST`, etc.
+
+Port pool 15700–15799. Persistent `/data/db` on Docker named volume `blob-mongodb-<name>`.
+
+The mongo image's `docker-entrypoint` only creates the root user from `MONGO_INITDB_ROOT_*` and the empty target db from `MONGO_INITDB_DATABASE`. The app-level `(user, password)` pair is provisioned post-start by a one-shot `mongo:<ver>` container running `mongosh` with `db.createUser(...)` and `readWrite` on the target db. The call is idempotent — re-running it on an existing instance is a no-op.
+
+UFW: open `15700:15800/tcp` from the docker bridge so app containers can reach the data plane.
+
+Single-node only; no replica set, no sharding. That's the v0.20+ conversation.

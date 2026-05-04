@@ -705,3 +705,33 @@ type ListClickHouseResponse struct {
 type ClickHouseURL struct {
 	URL string `json:"url"`
 }
+
+// Managed services — MongoDB (v0.19)
+type Mongo struct {
+	Name      string    `json:"name"`
+	Version   string    `json:"version"`
+	Host      string    `json:"host"`
+	Port      int       `json:"port"`
+	Database  string    `json:"database"`
+	User      string    `json:"user"`
+	JobID     string    `json:"job_id"`
+	URLMasked string    `json:"url"` // mongodb://blob:***@host:port/db?authSource=db
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type CreateMongoRequest struct {
+	Name     string `json:"name"`
+	Version  string `json:"version,omitempty"` // default 7
+	Database string `json:"database,omitempty"`
+	CPU      int    `json:"cpu,omitempty"`
+	Memory   int    `json:"memory,omitempty"`
+}
+
+type ListMongoResponse struct {
+	Mongo []Mongo `json:"mongo"`
+}
+
+type MongoURL struct {
+	URL string `json:"url"`
+}

@@ -135,6 +135,11 @@ Usage:
   blob clickhouse url <name>                      Print full clickhouse:// native DSN
   blob clickhouse destroy <name> [--yes]
 
+  blob mongodb list
+  blob mongodb create <name> [--version V] [--database D]
+  blob mongodb url <name>                         Print full mongodb:// URI (with password)
+  blob mongodb destroy <name> [--yes]
+
   blob autoscale list
   blob autoscale set <app> --min N --max M --metric cpu|memory|http_qps --target P
                                                   [--cooldown-up 60s] [--cooldown-down 180s]
@@ -145,7 +150,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.18.0"
+var version = "0.19.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -233,6 +238,8 @@ func main() {
 		cmdMySQL(args)
 	case "clickhouse":
 		cmdClickHouse(args)
+	case "mongodb", "mongo":
+		cmdMongo(args)
 	case "doctor":
 		cmdDoctor()
 	case "whoami":
@@ -2539,5 +2546,81 @@ func cmdClickHouse(args []string) {
 		fmt.Printf("destroyed clickhouse %q\n", name)
 	default:
 		die("unknown clickhouse subcommand: %s", args[0])
+	}
+}
+
+func cmdMongo(args []string) {
+	if len(args) == 0 {
+		die("usage: blob mongodb <list|create|url|destroy> ...")
+	}
+	c := mustClient()
+	switch args[0] {
+	case "list", "ls":
+		out, err := c.ListMongo(context.Background())
+		if err != nil {
+			die("%v", err)
+		}
+		if len(out.Mongo) == 0 {
+			fmt.Println("no mongodb instances")
+			return
+		}
+		fmt.Printf("%-20s %-7s %-10s %-22s %-7s %-15s %s\n", "NAME", "VERSION", "STATUS", "HOST", "PORT", "DATABASE", "URL")
+		for _, m := range out.Mongo {
+			fmt.Printf("%-20s %-7s %-10s %-22s %-7d %-15s %s\n",
+				m.Name, m.Version, m.Status, m.Host, m.Port, m.Database, m.URLMasked)
+		}
+	case "create":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob mongodb create <name> [--version V] [--database D]")
+		}
+		req := &api.CreateMongoRequest{
+			Name:     name,
+			Version:  flags["version"],
+			Database: flags["database"],
+		}
+		fmt.Printf("creating mongodb %q...\n", name)
+		t0 := time.Now()
+		out, err := c.CreateMongo(context.Background(), req)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("ready in %s\n", time.Since(t0).Round(100*time.Millisecond))
+		fmt.Printf("  name:        %s\n  version:     %s\n  host:        %s\n  port:        %d\n  database:    %s\n  user:        %s\n  url:         %s\n",
+			out.Name, out.Version, out.Host, out.Port, out.Database, out.User, out.URLMasked)
+		fmt.Println()
+		fmt.Printf("Bind apps with:\n  services:\n    - %s\nApps will receive MONGODB_URL, MONGO_URL, MONGODB_HOST, MONGODB_PORT,\nMONGODB_USER, MONGODB_PASSWORD, MONGODB_DATABASE.\n", name)
+	case "url":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob mongodb url <name>")
+		}
+		u, err := c.MongoURL(context.Background(), name)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Println(u)
+	case "destroy", "rm":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob mongodb destroy <name>")
+		}
+		if flags["yes"] != "true" {
+			fmt.Printf("destroy mongodb %q? (Docker volume blob-mongodb-%s preserved; type the name to confirm) ", name, name)
+			var line string
+			fmt.Fscanln(os.Stdin, &line)
+			if line != name {
+				die("aborted")
+			}
+		}
+		if err := c.DestroyMongo(context.Background(), name); err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("destroyed mongodb %q\n", name)
+	default:
+		die("unknown mongodb subcommand: %s", args[0])
 	}
 }
