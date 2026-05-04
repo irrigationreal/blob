@@ -39,6 +39,23 @@ ssh root@new-node.example.com 'sh /tmp/join.sh'
 
 Or paste it into a remote console session.
 
+### Alternative: bootstrap-client.sh (no laptop required)
+
+If you don't have a laptop with `blob` installed (e.g. provisioning the second node from CI, or the operator who set up the platform isn't around), use the static `scripts/bootstrap-client.sh` companion to `bootstrap-host.sh`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/darvell/blob/main/scripts/bootstrap-client.sh \
+  | sudo BLOB_SERVER_RPC=65.21.9.22:4647 \
+         REGISTRY=registry.example.com \
+         REGISTRY_USER=blob \
+         REGISTRY_PASS=$(ssh existing-host 'sudo grep ^password: /etc/blob/registry-credentials.txt | awk "{print \$2}"') \
+         sh
+```
+
+Required env: `BLOB_SERVER_RPC` (host:port of the existing platform's Nomad RPC, default port 4647). Optional: `DC` (default `dc1`), `REGISTRY` + `REGISTRY_USER` + `REGISTRY_PASS` (skip docker login if absent — the first workload's pull will fail with `unauthorized` if you skip and don't `docker login` manually later).
+
+Both paths produce the same outcome: a Nomad client at `/etc/nomad.d/blob-client.hcl` (static script) or `/etc/nomad.d/client.hcl` (`blob nodes join`) pointing at the existing platform's Nomad RPC, registered with `client { enabled = true }`.
+
 ## 3. Verify
 
 Back on your laptop:

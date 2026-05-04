@@ -125,7 +125,12 @@ func (c *Component) applyDefaults() {
 		c.CPU = 500
 	}
 	if c.Memory == 0 {
-		c.Memory = 512
+		// Default 256 MiB. Most static sites and tiny services fit
+		// comfortably under this; one node with 4 GiB free can hold
+		// ~14 default-shaped allocs before Nomad reports
+		// 'Resources exhausted'. Bump per-app via `memory:` in
+		// blob.yaml when you actually need more.
+		c.Memory = 256
 	}
 	if c.Replicas == 0 {
 		c.Replicas = 1
