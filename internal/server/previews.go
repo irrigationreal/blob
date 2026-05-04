@@ -151,10 +151,11 @@ func (s *Server) createPreview(ctx context.Context, app, branch string) (*api.Pr
 	if _, err := os.Stat(src); err != nil {
 		return nil, fmt.Errorf("no uploaded source for parent app %q — run `blob deploy` for it first", app)
 	}
-	parentMeta, ok := s.loadJobMeta(app)
-	if !ok {
-		return nil, fmt.Errorf("parent app %q has no job meta — deploy it first", app)
-	}
+	// jobMeta is per-component for App deploys (no umbrella meta exists),
+	// so we treat it as optional. The blob.yaml read below carries the
+	// authoritative shape; meta is just a Form-fallback for the
+	// single-component case where blob.yaml load failed.
+	parentMeta, _ := s.loadJobMeta(app)
 	m, err := manifest.Load(filepath.Join(src, "blob.yaml"))
 	if err != nil {
 		stdLog("preview %s/%s: blob.yaml load failed: %v (falling back to parent jobMeta only)", app, branch, err)
@@ -185,6 +186,13 @@ func (s *Server) createPreview(ctx context.Context, app, branch string) (*api.Pr
 		}
 		if c.Port > 0 {
 			req.Port = c.Port
+		}
+		// Image-mode component: c.Image becomes DeployRequest.Tag, which
+		// routes the deploy through deployImage (skip build, use the
+		// pre-built image directly). Same shape componentToReq uses on
+		// the CLI side.
+		if c.Image != "" {
+			req.Tag = c.Image
 		}
 		if len(c.Env) > 0 {
 			req.Env = c.Env
@@ -242,7 +250,14 @@ func (s *Server) createPreview(ctx context.Context, app, branch string) (*api.Pr
 	// ones that already landed so we don't leave half a preview in place.
 	var deployed []compToDeploy
 	for _, c := range plan {
-		_, derr := s.deployFromSource(ctx, src, c.req, app)
+		var derr error
+		if c.req.Tag != "" {
+			// Image-mode component — skip the build, use the pre-built
+			// image directly. Same routing as handleDeployApp.
+			_, derr = s.deployImage(ctx, c.req, app)
+		} else {
+			_, derr = s.deployFromSource(ctx, src, c.req, app)
+		}
 		if derr != nil {
 			// Roll back what we already deployed.
 			for _, prev := range deployed {
