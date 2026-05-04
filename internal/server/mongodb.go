@@ -209,14 +209,39 @@ func (s *Server) createMongo(ctx context.Context, req *api.CreateMongoRequest) (
 	if err := s.waitJobRunning(ctx, id, 120*time.Second); err != nil {
 		return nil, fmt.Errorf("mongodb %q did not become ready: %w", m.Name, err)
 	}
-	// The mongo:7 image's docker-entrypoint creates only the root user
-	// from MONGO_INITDB_ROOT_*. The app-level user/database we want
-	// needs an explicit createUser call in the target db. Best-effort
-	// idempotent provisioning via a one-shot mongosh container.
-	if err := s.ensureMongoUser(ctx, m); err != nil {
-		stdLog("mongodb %s: ensure app user %q in db %q returned %v (instance is up; create them manually with mongosh if your client errors with auth)", m.Name, m.User, m.Database, err)
+	// App user is provisioned by the init.js bind-mounted into
+	// /docker-entrypoint-initdb.d/ — the mongo entrypoint runs it
+	// before flipping the readiness gate, so by the time we get here
+	// it already exists. On data-dir reuse (re-create with a different
+	// password, etc.) initdb is skipped; in that case ensureMongoUser
+	// patches the live instance.
+	if isFreshDataDir, _ := s.mongoIsFreshVolume(m); !isFreshDataDir {
+		if err := s.ensureMongoUser(ctx, m); err != nil {
+			stdLog("mongodb %s: ensure app user %q in db %q returned %v (instance is up; create manually with mongosh if your client errors with auth)", m.Name, m.User, m.Database, err)
+		}
 	}
 	return s.mongoPublic(ctx, m), nil
+}
+
+// mongoIsFreshVolume returns true when the named docker volume has no
+// pre-existing data — used to decide whether to skip the post-start
+// user-provisioning hop on the happy path. Best-effort; on errors we
+// fall through and run the hop (the cost is one image pull on a stale
+// instance, which is rare).
+func (s *Server) mongoIsFreshVolume(m *mongoMeta) (bool, error) {
+	cmd := exec.Command("docker", "volume", "inspect", "--format", "{{.CreatedAt}}",
+		"blob-mongodb-"+m.Name)
+	out, err := cmd.Output()
+	if err != nil {
+		return false, err
+	}
+	created, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(out)))
+	if err != nil {
+		// Older docker emits a different format; fall back to "fresh".
+		return true, nil
+	}
+	// Created within the last 5 minutes → treat as fresh.
+	return time.Since(created) < 5*time.Minute, nil
 }
 
 // ensureMongoUser runs `mongosh` in a one-off container and creates the

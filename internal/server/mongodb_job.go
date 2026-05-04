@@ -7,12 +7,18 @@ import "fmt"
 // Static host port → container 27017. Persistent /data/db on a Docker
 // named volume. Root credentials provisioned by the official mongo
 // image's docker-entrypoint via MONGO_INITDB_ROOT_USERNAME/PASSWORD.
-// The app-level (user, database) tuple is created post-start by
-// ensureMongoUser via a one-shot mongosh container — the image's
-// MONGO_INITDB_DATABASE only creates the database, not a non-root user
-// in it.
+//
+// The app-level (user, database) tuple is provisioned via a generated
+// init script written to NOMAD_TASK_DIR/local/init.js and bind-mounted
+// into /docker-entrypoint-initdb.d/init.js. The mongo entrypoint runs
+// any *.js files in that directory as the root user *before* the main
+// mongod listener is declared ready — so by the time the Nomad health
+// check flips, the app user already exists. No post-start hop, no
+// second image pull.
 func renderMongoJob(m *mongoMeta, dc, id string, cpu, memory int) string {
 	volume := "blob-mongodb-" + m.Name
+	initJS := fmt.Sprintf(`db.getSiblingDB(%q).createUser({ user: %q, pwd: %q, roles: [ { role: "readWrite", db: %q } ] });`,
+		m.Database, m.User, m.Password, m.Database)
 	return fmt.Sprintf(`job %q {
   datacenters = [%q]
   type = "service"
@@ -41,6 +47,14 @@ func renderMongoJob(m *mongoMeta, dc, id string, cpu, memory int) string {
 
     task "mongodb" {
       driver = "docker"
+
+      template {
+        destination = "local/init.js"
+        data        = <<EOH
+%s
+EOH
+      }
+
       config {
         image = "mongo:%s"
         ports = ["mongo"]
@@ -49,6 +63,12 @@ func renderMongoJob(m *mongoMeta, dc, id string, cpu, memory int) string {
           target   = "/data/db"
           source   = %q
           readonly = false
+        }
+        mount {
+          type     = "bind"
+          source   = "local/init.js"
+          target   = "/docker-entrypoint-initdb.d/init.js"
+          readonly = true
         }
       }
       env {
@@ -67,6 +87,7 @@ func renderMongoJob(m *mongoMeta, dc, id string, cpu, memory int) string {
 		id, dc,
 		m.Port,
 		"mongodb-"+m.Name,
+		initJS,
 		m.Version,
 		volume,
 		m.RootUser,

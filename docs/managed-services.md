@@ -573,7 +573,9 @@ Additional bindings get name-prefixed env: `<NAME>_URL`, `<NAME>_HOST`, etc.
 
 Port pool 15700–15799. Persistent `/data/db` on Docker named volume `blob-mongodb-<name>`.
 
-The mongo image's `docker-entrypoint` only creates the root user from `MONGO_INITDB_ROOT_*` and the empty target db from `MONGO_INITDB_DATABASE`. The app-level `(user, password)` pair is provisioned post-start by a one-shot `mongo:<ver>` container running `mongosh` with `db.createUser(...)` and `readWrite` on the target db. The call is idempotent — re-running it on an existing instance is a no-op.
+The mongo image's `docker-entrypoint` only creates the root user from `MONGO_INITDB_ROOT_*` and the empty target db from `MONGO_INITDB_DATABASE`. The app-level `(user, password)` pair is provisioned via a generated `init.js` bind-mounted into `/docker-entrypoint-initdb.d/init.js` — the entrypoint runs it on first boot before flipping the readiness gate, so the app user exists by the time the Nomad health check goes green. Cold create is ~18s (v0.21+).
+
+On data-dir reuse (recreating with the same name and a different password), the entrypoint skips initdb; in that case `ensureMongoUser` runs a one-shot `mongosh` container as a fallback to patch the existing instance.
 
 UFW: open `15700:15800/tcp` from the docker bridge so app containers can reach the data plane.
 
