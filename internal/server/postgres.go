@@ -375,6 +375,8 @@ func (s *Server) resolveServices(req *api.DeployRequest) error {
 	tempoPrimary := true
 	prometheusPrimary := true
 	storagePrimary := true
+	mysqlPrimary := true
+	clickhousePrimary := true
 	for _, svc := range req.Services {
 		// Try project binding first ("instance.project").
 		if instance, project := parseProjectBinding(svc); project != "" {
@@ -455,6 +457,12 @@ func (s *Server) resolveServices(req *api.DeployRequest) error {
 			continue
 		}
 		if s.lookupStorageForBinding(svc, req.Env, &storagePrimary) {
+			continue
+		}
+		if s.lookupMySQLForBinding(svc, req.Env, &mysqlPrimary) {
+			continue
+		}
+		if s.lookupClickHouseForBinding(svc, req.Env, &clickhousePrimary) {
 			continue
 		}
 		return fmt.Errorf("service %q not found", svc)

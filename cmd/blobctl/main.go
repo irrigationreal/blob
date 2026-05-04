@@ -123,6 +123,16 @@ Usage:
   blob storage url <name>                         Print endpoint + bucket + keys + console URL
   blob storage destroy <name> [--yes]
 
+  blob mysql list
+  blob mysql create <name> [--version V] [--database D]
+  blob mysql url <name>                           Print full mysql:// DSN (with password)
+  blob mysql destroy <name> [--yes]
+
+  blob clickhouse list
+  blob clickhouse create <name> [--version V] [--database D]
+  blob clickhouse url <name>                      Print full clickhouse:// native DSN
+  blob clickhouse destroy <name> [--yes]
+
   blob autoscale list
   blob autoscale set <app> --min N --max M --metric cpu|memory|http_qps --target P
                                                   [--cooldown-up 60s] [--cooldown-down 180s]
@@ -133,7 +143,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.16.0"
+var version = "0.17.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -217,6 +227,10 @@ func main() {
 		cmdWebhook(args)
 	case "storage":
 		cmdStorage(args)
+	case "mysql":
+		cmdMySQL(args)
+	case "clickhouse":
+		cmdClickHouse(args)
 	case "doctor":
 		cmdDoctor()
 	case "whoami":
@@ -2341,5 +2355,161 @@ func cmdStorage(args []string) {
 		fmt.Printf("destroyed storage %q (Docker volume blob-storage-%s preserved)\n", name, name)
 	default:
 		die("unknown storage subcommand: %s", args[0])
+	}
+}
+
+// --- managed services: mysql / clickhouse (v0.17) ---
+
+func cmdMySQL(args []string) {
+	if len(args) == 0 {
+		die("usage: blob mysql <list|create|url|destroy> ...")
+	}
+	c := mustClient()
+	switch args[0] {
+	case "list", "ls":
+		out, err := c.ListMySQL(context.Background())
+		if err != nil {
+			die("%v", err)
+		}
+		if len(out.MySQL) == 0 {
+			fmt.Println("no mysql instances")
+			return
+		}
+		fmt.Printf("%-20s %-7s %-10s %-22s %-7s %-12s %s\n", "NAME", "VERSION", "STATUS", "HOST", "PORT", "DATABASE", "URL")
+		for _, m := range out.MySQL {
+			fmt.Printf("%-20s %-7s %-10s %-22s %-7d %-12s %s\n", m.Name, m.Version, m.Status, m.Host, m.Port, m.Database, m.URLMasked)
+		}
+	case "create":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob mysql create <name> [--version V] [--database D]")
+		}
+		req := &api.CreateMySQLRequest{
+			Name:     name,
+			Version:  flags["version"],
+			Database: flags["database"],
+		}
+		fmt.Printf("creating mysql %q...\n", name)
+		t0 := time.Now()
+		out, err := c.CreateMySQL(context.Background(), req)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("ready in %s\n", time.Since(t0).Round(100*time.Millisecond))
+		fmt.Printf("  name:     %s\n  version:  %s\n  host:     %s\n  port:     %d\n  database: %s\n  user:     %s\n  url:      %s\n",
+			out.Name, out.Version, out.Host, out.Port, out.Database, out.User, out.URLMasked)
+		fmt.Println()
+		fmt.Printf("Bind apps with:\n  services:\n    - %s\nApps will receive MYSQL_URL, MYSQL_HOST, MYSQL_PORT, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE.\n", name)
+	case "url":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob mysql url <name>")
+		}
+		u, err := c.MySQLURL(context.Background(), name)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Println(u)
+	case "destroy", "rm":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob mysql destroy <name>")
+		}
+		if flags["yes"] != "true" {
+			fmt.Printf("destroy mysql %q? (Docker volume blob-mysql-%s preserved; type the name to confirm) ", name, name)
+			var line string
+			fmt.Fscanln(os.Stdin, &line)
+			if line != name {
+				die("aborted")
+			}
+		}
+		if err := c.DestroyMySQL(context.Background(), name); err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("destroyed mysql %q\n", name)
+	default:
+		die("unknown mysql subcommand: %s", args[0])
+	}
+}
+
+func cmdClickHouse(args []string) {
+	if len(args) == 0 {
+		die("usage: blob clickhouse <list|create|url|destroy> ...")
+	}
+	c := mustClient()
+	switch args[0] {
+	case "list", "ls":
+		out, err := c.ListClickHouse(context.Background())
+		if err != nil {
+			die("%v", err)
+		}
+		if len(out.ClickHouse) == 0 {
+			fmt.Println("no clickhouse instances")
+			return
+		}
+		fmt.Printf("%-20s %-7s %-10s %-22s %-15s %-12s %s\n", "NAME", "VERSION", "STATUS", "HOST", "HTTP:NATIVE", "DATABASE", "URL")
+		for _, m := range out.ClickHouse {
+			fmt.Printf("%-20s %-7s %-10s %-22s %-15s %-12s %s\n",
+				m.Name, m.Version, m.Status, m.Host,
+				fmt.Sprintf("%d:%d", m.HTTPPort, m.NativePort),
+				m.Database, m.URLMasked)
+		}
+	case "create":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob clickhouse create <name> [--version V] [--database D]")
+		}
+		req := &api.CreateClickHouseRequest{
+			Name:     name,
+			Version:  flags["version"],
+			Database: flags["database"],
+		}
+		fmt.Printf("creating clickhouse %q...\n", name)
+		t0 := time.Now()
+		out, err := c.CreateClickHouse(context.Background(), req)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("ready in %s\n", time.Since(t0).Round(100*time.Millisecond))
+		fmt.Printf("  name:        %s\n  version:     %s\n  host:        %s\n  http:        %s:%d\n  native:      %s:%d\n  database:    %s\n  user:        %s\n  url:         %s\n",
+			out.Name, out.Version, out.Host, out.Host, out.HTTPPort, out.Host, out.NativePort,
+			out.Database, out.User, out.URLMasked)
+		fmt.Println()
+		fmt.Printf("Bind apps with:\n  services:\n    - %s\nApps will receive CLICKHOUSE_URL, CLICKHOUSE_HTTP_URL, CLICKHOUSE_HOST, CLICKHOUSE_PORT,\nCLICKHOUSE_HTTP_PORT, CLICKHOUSE_USER, CLICKHOUSE_PASSWORD, CLICKHOUSE_DATABASE.\n", name)
+	case "url":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob clickhouse url <name>")
+		}
+		u, err := c.ClickHouseURL(context.Background(), name)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Println(u)
+	case "destroy", "rm":
+		flags := parseFlags(args[1:])
+		name := positional(flags, 0)
+		if name == "" {
+			die("usage: blob clickhouse destroy <name>")
+		}
+		if flags["yes"] != "true" {
+			fmt.Printf("destroy clickhouse %q? (Docker volume blob-clickhouse-%s preserved; type the name to confirm) ", name, name)
+			var line string
+			fmt.Fscanln(os.Stdin, &line)
+			if line != name {
+				die("aborted")
+			}
+		}
+		if err := c.DestroyClickHouse(context.Background(), name); err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("destroyed clickhouse %q\n", name)
+	default:
+		die("unknown clickhouse subcommand: %s", args[0])
 	}
 }

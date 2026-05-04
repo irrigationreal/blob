@@ -486,3 +486,61 @@ docker run --rm --network host minio/mc:latest sh -c \
 ### Verified live (v0.14 ship)
 
 A two-component blob app with one component bound to `services: [assets]` writes a sentinel file via the AWS SDK and reads it back from another route. Round-trip lands in MinIO; the same file is visible via `mc ls s/assets`.
+
+## MySQL (v0.17): managed relational
+
+Single-node MySQL 8 with one auto-provisioned database + app user per instance. Same template pattern as postgres/valkey.
+
+```sh
+blob mysql create my-mysql                      # creates instance + database 'my-mysql'
+blob mysql create app-mysql --database app
+blob mysql url my-mysql                         # prints full mysql:// DSN with password
+blob mysql list
+blob mysql destroy my-mysql                     # Docker volume blob-mysql-my-mysql preserved
+```
+
+Env injected into bound apps (first mysql binding wins the canonical slot):
+
+```
+MYSQL_URL         mysql://blob:<pass>@<host>:<port>/<db>
+MYSQL_HOST
+MYSQL_PORT
+MYSQL_USER
+MYSQL_PASSWORD
+MYSQL_DATABASE
+```
+
+Additional bindings get name-prefixed env: `<NAME>_URL`, `<NAME>_HOST`, etc.
+
+Port pool 15300–15399. Persistent `/var/lib/mysql` on Docker named volume `blob-mysql-<name>`. The official `mysql:8` image's `docker-entrypoint` provisions the database + user on first start (empty data dir); subsequent restarts skip provisioning.
+
+UFW: open `15300:15400/tcp` from the docker bridge so app containers can reach the data plane.
+
+## ClickHouse (v0.17): managed OLAP
+
+Single-node clickhouse-server, OLAP mode. Two ports per instance: HTTP REST (8123-shaped) on the host's HTTP-port, native TCP (9000-shaped) on the host's native-port. Default user `blob` with a generated password.
+
+```sh
+blob clickhouse create my-ch                    # creates instance + database 'my-ch'
+blob clickhouse create events --database events
+blob clickhouse url my-ch                       # prints native clickhouse:// DSN
+blob clickhouse list
+blob clickhouse destroy my-ch
+```
+
+Env injected (first clickhouse binding wins canonical slot):
+
+```
+CLICKHOUSE_URL          clickhouse://blob:<pass>@<host>:<native>/<db>
+CLICKHOUSE_HTTP_URL     http://blob:<pass>@<host>:<http>/
+CLICKHOUSE_HOST
+CLICKHOUSE_PORT         (native)
+CLICKHOUSE_HTTP_PORT
+CLICKHOUSE_USER
+CLICKHOUSE_PASSWORD
+CLICKHOUSE_DATABASE
+```
+
+Port pools: HTTP 15500–15599, native 15600–15699. UFW: open `15500:15700/tcp` from the docker bridge.
+
+Memory floor is real: ClickHouse below 1 GiB will OOM under any non-trivial query. Default `memory: 1024` per instance; bump for production-shaped workloads.

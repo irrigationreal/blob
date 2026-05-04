@@ -107,6 +107,23 @@ func (s *Server) listServices(ctx context.Context) (*api.ListServicesResponse, e
 			})
 		}
 	}
+	if my, err := s.listMySQL(ctx); err == nil {
+		for _, m := range my.MySQL {
+			out.Services = append(out.Services, api.ServiceSummary{
+				Kind: "mysql", Name: m.Name, Status: m.Status, Host: m.Host,
+				Ports: []int{m.Port}, URLs: []string{m.URLMasked},
+			})
+		}
+	}
+	if ch, err := s.listClickHouse(ctx); err == nil {
+		for _, m := range ch.ClickHouse {
+			out.Services = append(out.Services, api.ServiceSummary{
+				Kind: "clickhouse", Name: m.Name, Status: m.Status, Host: m.Host,
+				Ports: []int{m.HTTPPort, m.NativePort},
+				URLs:  []string{m.URLMasked},
+			})
+		}
+	}
 
 	sort.Slice(out.Services, func(i, j int) bool {
 		if out.Services[i].Kind != out.Services[j].Kind {

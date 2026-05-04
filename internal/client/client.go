@@ -717,3 +717,79 @@ func (c *Client) StorageURL(ctx context.Context, name string) (*api.StorageURL, 
 func (c *Client) DestroyStorage(ctx context.Context, name string) error {
 	return c.do(ctx, "DELETE", "/v1/storage/"+url.PathEscape(name), nil, nil)
 }
+
+// --- MySQL (v0.17) ---
+
+func (c *Client) ListMySQL(ctx context.Context) (*api.ListMySQLResponse, error) {
+	out := &api.ListMySQLResponse{}
+	if err := c.do(ctx, "GET", "/v1/mysql", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) CreateMySQL(ctx context.Context, req *api.CreateMySQLRequest) (*api.MySQL, error) {
+	out := &api.MySQL{}
+	if err := c.do(ctx, "POST", "/v1/mysql", req, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) GetMySQL(ctx context.Context, name string) (*api.MySQL, error) {
+	out := &api.MySQL{}
+	if err := c.do(ctx, "GET", "/v1/mysql/"+url.PathEscape(name), nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) MySQLURL(ctx context.Context, name string) (string, error) {
+	out := &api.MySQLURL{}
+	if err := c.do(ctx, "GET", "/v1/mysql/"+url.PathEscape(name)+"/url", nil, out); err != nil {
+		return "", err
+	}
+	return out.URL, nil
+}
+
+func (c *Client) DestroyMySQL(ctx context.Context, name string) error {
+	return c.do(ctx, "DELETE", "/v1/mysql/"+url.PathEscape(name), nil, nil)
+}
+
+// --- ClickHouse (v0.17) ---
+
+func (c *Client) ListClickHouse(ctx context.Context) (*api.ListClickHouseResponse, error) {
+	out := &api.ListClickHouseResponse{}
+	if err := c.do(ctx, "GET", "/v1/clickhouse", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) CreateClickHouse(ctx context.Context, req *api.CreateClickHouseRequest) (*api.ClickHouse, error) {
+	out := &api.ClickHouse{}
+	if err := c.do(ctx, "POST", "/v1/clickhouse", req, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) GetClickHouse(ctx context.Context, name string) (*api.ClickHouse, error) {
+	out := &api.ClickHouse{}
+	if err := c.do(ctx, "GET", "/v1/clickhouse/"+url.PathEscape(name), nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) ClickHouseURL(ctx context.Context, name string) (string, error) {
+	out := &api.ClickHouseURL{}
+	if err := c.do(ctx, "GET", "/v1/clickhouse/"+url.PathEscape(name)+"/url", nil, out); err != nil {
+		return "", err
+	}
+	return out.URL, nil
+}
+
+func (c *Client) DestroyClickHouse(ctx context.Context, name string) error {
+	return c.do(ctx, "DELETE", "/v1/clickhouse/"+url.PathEscape(name), nil, nil)
+}

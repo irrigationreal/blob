@@ -644,3 +644,64 @@ type StorageURL struct {
 	SecretKey string `json:"secret_key"`
 	Console   string `json:"console"`
 }
+
+// Managed services — MySQL (v0.17)
+type MySQL struct {
+	Name      string    `json:"name"`
+	Version   string    `json:"version"`
+	Host      string    `json:"host"`
+	Port      int       `json:"port"`
+	Database  string    `json:"database"`
+	User      string    `json:"user"`
+	JobID     string    `json:"job_id"`
+	URLMasked string    `json:"url"` // mysql://blob:***@host:port/db
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type CreateMySQLRequest struct {
+	Name     string `json:"name"`
+	Version  string `json:"version,omitempty"` // default 8.4
+	Database string `json:"database,omitempty"`
+	CPU      int    `json:"cpu,omitempty"`
+	Memory   int    `json:"memory,omitempty"`
+}
+
+type ListMySQLResponse struct {
+	MySQL []MySQL `json:"mysql"`
+}
+
+type MySQLURL struct {
+	URL string `json:"url"`
+}
+
+// Managed services — ClickHouse (v0.17)
+type ClickHouse struct {
+	Name       string    `json:"name"`
+	Version    string    `json:"version"`
+	Host       string    `json:"host"`
+	HTTPPort   int       `json:"http_port"`
+	NativePort int       `json:"native_port"`
+	Database   string    `json:"database"`
+	User       string    `json:"user"`
+	JobID      string    `json:"job_id"`
+	URLMasked  string    `json:"url"`
+	Status     string    `json:"status"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+type CreateClickHouseRequest struct {
+	Name     string `json:"name"`
+	Version  string `json:"version,omitempty"` // default 24.11
+	Database string `json:"database,omitempty"`
+	CPU      int    `json:"cpu,omitempty"`
+	Memory   int    `json:"memory,omitempty"`
+}
+
+type ListClickHouseResponse struct {
+	ClickHouse []ClickHouse `json:"clickhouse"`
+}
+
+type ClickHouseURL struct {
+	URL string `json:"url"`
+}
