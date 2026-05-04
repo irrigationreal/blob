@@ -22,8 +22,11 @@ This prints a self-contained shell script that:
 - installs Nomad (latest from HashiCorp APT)
 - writes `/etc/nomad.d/client.hcl` pointing at your existing Blob server
 - enables and starts both services
+- runs `docker login registry.<base-domain>` using the credentials from the existing Blob host's `/etc/blob/registry-credentials.txt`, so the first workload to schedule on this node can pull from the private registry without manual setup
 
 The script is **idempotent** — safe to re-run if a previous attempt half-finished.
+
+The credentials are embedded directly in the script body. `/v1/join` is auth-gated by the same bearer token that lets you deploy, so this doesn't widen exposure beyond who already has the keys to the kingdom. Treat the generated `join.sh` as a secret — don't commit it.
 
 ## 2. Run it on the new host
 
@@ -55,7 +58,7 @@ ID           NAME                 ADDR            STATUS     ELIGIBLE   DC
 ## What still needs to be on each node
 
 - **Storage**: the new node needs to be able to access workloads' Docker volumes. For now (v0.3) this means workloads using `volumes:` in `blob.yaml` should be either pinned to a single node, or be okay with re-creation if rescheduled. A future version will use a CSI plugin so volumes follow the workload.
-- **Registry pull credentials**: the join script does NOT push the registry credentials to the new host. The first time a workload is scheduled there, the pull may fail with auth errors. Workaround: `ssh new-node 'docker login registry.<base-domain>'` once. (Coming up: blobd will distribute pull creds automatically.)
+- **Registry pull credentials**: handled by `blob nodes join` since v0.13 — the script runs `docker login registry.<base-domain>` with the credentials from the existing Blob host's `/etc/blob/registry-credentials.txt`. If you brought a node up before v0.13 (no docker login baked in) and it's failing pulls, re-run `sh /tmp/join.sh` from a freshly-generated `blob nodes join`, or `ssh new-node 'docker login registry.<base-domain>'` once with the creds.
 
 ## Draining a node
 

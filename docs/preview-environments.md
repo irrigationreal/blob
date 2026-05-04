@@ -75,8 +75,10 @@ $ curl -sS -o /dev/null -w "%{http_code}\n" https://peepal-test1.irrigate.cc/
 
 ## Limitations
 
-- **Multi-component apps deploy only the first component as a preview.** The whole-app shape (one Nomad job per component, same source tarball) is shipped for `blob deploy --app` but not yet for previews. Workaround: split your App into discrete apps if you need full multi-component preview coverage. Lifting this is a follow-up.
-- **No webhook auto-create.** Spec marked the `POST /v1/webhooks/preview` HMAC receiver as stretch; deferred. CI integration today: `blob preview create $APP --branch $CI_BRANCH` from your pipeline on PR open, `blob preview destroy $APP $CI_BRANCH` on close.
+- **Multi-component apps deploy one Nomad job per component under the branch namespace** (since v0.13). Job ids are `<app>-<branch>-<component>`; each component gets its own subdomain at `<app>-<branch>-<component>.<base-domain>`. The top-level `URL` returned by the API points at the first component for back-compat with single-component callers; the full list lives in the `Components` array.
+- **No webhook auto-create.**
+  - GitHub: shipped in v0.13. `blob webhook github setup <app>` returns the URL + secret to paste into the repo's webhook config. PR open/synchronize → preview create; PR closed → preview destroy.
+  - GitLab/Bitbucket: not yet — same shape, sibling provider files when wired up.
 - **No automatic stale-cleanup.** Old preview sentinels persist until you `blob preview destroy` them. If you want a TTL, add a cron that scans `/srv/blob/previews/` and deletes by `created_at`.
 - **Parent must have been deployed at least once.** The preview reads from the parent's source dir; it doesn't accept an upload from the CLI directly. To preview a brand-new app, do one `blob deploy` of the parent first.
 - **Env/secrets are inherited verbatim from the parent.** No per-branch overrides yet. If you need a different `DATABASE_URL` per preview, manage it via `blob secrets set --env preview-test1 …` and add a `--env` flag to preview create as a follow-up.

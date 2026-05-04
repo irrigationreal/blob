@@ -129,6 +129,101 @@ If `blobd` itself is healthy but Traefik isn't routing to it: `nomad job status 
 
 If Nomad itself is unhappy: `nomad agent-info` and `journalctl -u nomad -n 100`.
 
+## Postgres backup shipping (v0.7+)
+
+Each managed Postgres instance can ship dumps to any S3-compatible store on a UTC cron with daily/weekly/monthly retention. State at `/srv/blob/postgres/<instance>/backup-config.json` (mode 0600).
+
+```sh
+# Configure once per instance
+blob postgres backup-config set my-pg \
+  --s3-endpoint https://s3.amazonaws.com \
+  --s3-region us-east-1 \
+  --s3-bucket blob-backups \
+  --s3-prefix my-pg/ \
+  --s3-access-key-id <KEY> \
+  --s3-secret-access-key <SECRET> \
+  --schedule "0 3 * * *" \
+  --retention-daily 7 --retention-weekly 4 --retention-monthly 6 \
+  --enable
+
+blob postgres backup-config get my-pg     # secret key shown as ***
+blob postgres backup-config test my-pg    # HEAD bucket round-trip
+blob postgres backups my-pg               # unified local + remote view with sha256
+blob postgres restore my-pg latest --from s3 --force
+```
+
+Failure mode to watch: if the in-process scheduler can't reach the configured S3 endpoint, `journalctl -u blobd | grep "ship failed"` shows the exact error. Local backups continue to land at `/srv/blob/backups/postgres/<instance>/` regardless. See [`docs/managed-services.md#off-host-backup-shipping`](managed-services.md) for endpoint-tuning notes (Cloudflare in front of an S3 host mangles SigV4 — point at the origin host directly).
+
+## Observability stack (v0.8 + v0.10)
+
+Logs (Loki + Promtail), traces (Tempo), metrics (Prometheus), dashboards (Grafana) are managed services on the same control plane.
+
+```sh
+blob loki create platform-logs
+blob promtail create platform-shipper --loki platform-logs
+blob tempo create platform-tempo
+blob prometheus create platform-prom
+blob grafana create platform-graf \
+  --loki platform-logs \
+  --tempo platform-tempo \
+  --prometheus platform-prom
+blob grafana url platform-graf            # prints URL + admin password
+```
+
+Once a Loki is registered, `blob logs <app> --since 5m --grep ERROR` queries it via `/loki/api/v1/query_range` and returns chronological lines. Falls back to `nomad alloc logs --tail` when no Loki is registered or no `--since`/`--grep` is passed.
+
+Once a Tempo is registered, blobd auto-exports OTLP traces for the deploy code paths. Confirm with `curl http://<host>:13200/api/search?tags=service.name%3Dblobd`.
+
+Once a Prometheus is registered, `/metrics` on blobd is scraped automatically. Add cAdvisor (system job, see [`docs/observability.md`](observability.md)) to feed `cpu`/`memory` autoscale metrics.
+
+### UFW for managed-service ports
+
+`bootstrap-host.sh` only opens 22/80/443. Apply these once before creating any managed service — without them the docker bridge can't reach the data plane:
+
+```sh
+sudo ufw allow 13000:13400/tcp comment "blob-observability"   # Loki, Grafana, Tempo, Prometheus
+sudo ufw allow 14222:14322/tcp comment "blob-nats"
+sudo ufw allow from 172.17.0.0/16 to any port 8787 proto tcp  # blobd /metrics from Prometheus
+sudo ufw allow from 172.17.0.0/16 to any port 4646 proto tcp  # Nomad SD from Prometheus
+```
+
+Memory budget: Loki 512 MiB cap (~85 MiB resident), Tempo 512 MiB (~120 MiB), Prometheus 512 MiB (~150 MiB at low cardinality), Grafana 384 MiB (~80 MiB), Promtail 128 MiB per node. Whole stack fits in ~1 GiB resident on a single host.
+
+## Autoscaling (v0.11)
+
+Per-app horizontal autoscaler. blobd ticks every 30s, queries the first registered Prometheus for the configured metric, runs Kubernetes-style ratio scaling (`desired = ceil(current * value/target)` clamped to `[min,max]`), applies cooldowns.
+
+```sh
+blob autoscale set my-app \
+  --metric cpu \
+  --target 50 \
+  --min 1 --max 5 \
+  --cooldown-up 60s --cooldown-down 180s
+blob autoscale list
+blob autoscale get my-app
+blob autoscale unset my-app
+```
+
+Built-in metrics: `cpu` and `memory` (need cAdvisor), `http_qps` (needs the app to expose `blob_http_requests_total{app="<n>"}`). Raw PromQL with `__APP__` placeholder works for anything else. Metric outage is a no-op — blobd never scales to zero on a transient Prometheus failure. State at `/srv/blob/autoscale/<app>.json`. Full notes in [`docs/autoscaling.md`](autoscaling.md).
+
+## Preview environments (v0.12)
+
+Ephemeral per-branch deploys at `<app>-<branch>.<base-domain>`, reusing the parent app's source tarball.
+
+```sh
+blob preview create my-app --branch test1
+blob preview list my-app
+blob preview destroy my-app test1
+```
+
+Multi-component apps get one Nomad job per component under the branch namespace (since v0.13). State at `/srv/blob/previews/<app>/<branch>.json`. Full lifecycle in [`docs/preview-environments.md`](preview-environments.md).
+
+## GitHub webhook for previews (v0.13)
+
+`blob webhook github setup <app>` returns the URL and HMAC secret to paste into a GitHub repo's Webhooks settings. blobd auto-creates a preview at `<app>-pr-<number>.<base>` on `pull_request.opened` / `synchronize` and tears it down on `closed`. Secret stored at `/srv/blob/webhooks/<app>/github.json` mode 0600.
+
+If a preview gets stuck (PR closed but the preview still up), `blob preview destroy <app> pr-<N>` clears it manually. Webhook receiver logs land in `journalctl -u blobd | grep webhook`.
+
 ## Doctor severity legend
 
 `blob doctor` returns issues at four severities:

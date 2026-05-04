@@ -657,3 +657,25 @@ func (c *Client) CreatePreview(ctx context.Context, app, branch string) (*api.Pr
 func (c *Client) DestroyPreview(ctx context.Context, app, branch string) error {
 	return c.do(ctx, "DELETE", "/v1/apps/"+url.PathEscape(app)+"/preview/"+url.PathEscape(branch), nil, nil)
 }
+
+// --- GitHub webhook setup (v0.13) ---
+
+func (c *Client) SetupGitHubWebhook(ctx context.Context, app string) (*api.WebhookSetupResponse, error) {
+	out := &api.WebhookSetupResponse{}
+	if err := c.do(ctx, "PUT", "/v1/webhooks/setup/github/"+url.PathEscape(app), nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) GetGitHubWebhook(ctx context.Context, app string) (*api.WebhookSetupResponse, error) {
+	out := &api.WebhookSetupResponse{}
+	if err := c.do(ctx, "GET", "/v1/webhooks/setup/github/"+url.PathEscape(app), nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) RemoveGitHubWebhook(ctx context.Context, app string) error {
+	return c.do(ctx, "DELETE", "/v1/webhooks/setup/github/"+url.PathEscape(app), nil, nil)
+}

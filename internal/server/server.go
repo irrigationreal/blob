@@ -145,13 +145,15 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/v1/autoscale", s.handleAutoscale)
 	mux.HandleFunc("/v1/autoscale/", s.handleAutoscaleItem)
 	mux.HandleFunc("/v1/services", s.handleServices)
+	mux.HandleFunc("/v1/webhooks/setup/", s.handleWebhookSetup)
+	mux.HandleFunc("/v1/webhooks/github", s.handleWebhookGitHub)
 	mux.Handle("/metrics", promhttp.Handler())
 	return s.withAuth(mux)
 }
 
 func (s *Server) withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" || r.URL.Path == "/metrics" {
+		if r.URL.Path == "/healthz" || r.URL.Path == "/metrics" || r.URL.Path == "/v1/webhooks/github" {
 			next.ServeHTTP(w, r)
 			return
 		}

@@ -584,9 +584,29 @@ type Preview struct {
 	Domain    string    `json:"domain"`
 	URL       string    `json:"url"`
 	CreatedAt time.Time `json:"created_at"`
+	// Components is populated for multi-component preview deploys
+	// (v0.13). Each entry is a single Nomad job under the branch
+	// namespace. For single-component manifests this is empty; the
+	// JobID/Domain/URL above describe the only component.
+	Components []PreviewComponent `json:"components,omitempty"`
+}
+
+// PreviewComponent describes one Nomad job in a multi-component preview.
+type PreviewComponent struct {
+	Name   string `json:"name"`   // component name from blob.yaml
+	JobID  string `json:"job_id"` // <app>-<branch>-<component>
+	Domain string `json:"domain"`
+	URL    string `json:"url"`
 }
 
 type ListPreviewsResponse struct {
 	App      string    `json:"app"`
 	Previews []Preview `json:"previews"`
+}
+
+// Webhook receivers (v0.13)
+type WebhookSetupResponse struct {
+	App    string `json:"app"`
+	URL    string `json:"url"`
+	Secret string `json:"secret"`
 }

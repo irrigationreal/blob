@@ -135,9 +135,17 @@ func (s *Server) listPreviews(app string) ([]api.Preview, error) {
 }
 
 // createPreview deploys an ephemeral copy of <app>'s last-uploaded
-// source tarball under the job name <app>-<branch>.<base-domain>. It
-// reuses the same form/port/etc the parent app declared (read from the
-// parent's job meta).
+// source tarball under the synthesized job name <app>-<branch>. For
+// multi-component App manifests, every component lands as its own
+// Nomad job under the branch namespace: <app>-<branch>-<component>.
+// Each component gets its own subdomain
+// <app>-<branch>-<component>.<base-domain>; the canonical preview URL
+// (the one returned in the top-level URL field) points at the first
+// component for back-compat.
+//
+// Reuses the parent's source dir (no re-upload). Reads each component's
+// shape from the source's blob.yaml so port/env/services/command/etc.
+// match what `blob deploy` would have produced for the same source.
 func (s *Server) createPreview(ctx context.Context, app, branch string) (*api.Preview, error) {
 	src := filepath.Join(s.cfg.SourcesDir, app)
 	if _, err := os.Stat(src); err != nil {
@@ -147,27 +155,30 @@ func (s *Server) createPreview(ctx context.Context, app, branch string) (*api.Pr
 	if !ok {
 		return nil, fmt.Errorf("parent app %q has no job meta — deploy it first", app)
 	}
-	previewApp := previewJobName(app, branch)
-	domain := previewApp + "." + s.cfg.BaseDomain
-
-	// Read the parent's blob.yaml from the source tarball so we get the
-	// full shape (port, env, secrets, services, command, ...). The CLI
-	// is what normally loads this and packs it into DeployRequest, but
-	// we don't go through the CLI for previews.
-	req := &api.DeployRequest{
-		App:         previewApp,
-		Environment: "prod",
-		Form:        parentMeta.Form,
-		Domain:      domain,
+	m, err := manifest.Load(filepath.Join(src, "blob.yaml"))
+	if err != nil {
+		stdLog("preview %s/%s: blob.yaml load failed: %v (falling back to parent jobMeta only)", app, branch, err)
+		// Without a manifest we can only do the single-component
+		// shortcut using whatever the parent's jobMeta tells us.
+		m = nil
 	}
-	if m, err := manifest.Load(filepath.Join(src, "blob.yaml")); err == nil {
-		// For multi-component apps we deploy only the first component as
-		// a preview — keeps the URL shape simple. Operators with App
-		// manifests can drive multi-component previews as a follow-up
-		// once the simple shape is proven.
-		c := m.Component
-		if m.IsApp() && len(m.Components) > 0 {
-			c = m.Components[0]
+
+	// Decide the component list. Single-component manifests (or the
+	// fallback path) deploy one job named <app>-<branch>. App manifests
+	// with N components deploy N jobs named <app>-<branch>-<component>.
+	type compToDeploy struct {
+		name     string // component name; empty means "this is the single-component case"
+		jobID    string
+		domain   string
+		req      *api.DeployRequest
+	}
+	var plan []compToDeploy
+	mkReq := func(c manifest.Component, jobID, domain string) *api.DeployRequest {
+		req := &api.DeployRequest{
+			App:         jobID,
+			Environment: "prod",
+			Form:        parentMeta.Form,
+			Domain:      domain,
 		}
 		if c.Form != "" {
 			req.Form = c.Form
@@ -199,42 +210,114 @@ func (s *Server) createPreview(ctx context.Context, app, branch string) (*api.Pr
 		if c.Build != "" {
 			req.Build = c.Build
 		}
+		return req
+	}
+	if m != nil && m.IsApp() && len(m.Components) > 0 {
+		for _, c := range m.Components {
+			id := previewJobName(app, branch) + "-" + c.Name
+			d := id + "." + s.cfg.BaseDomain
+			plan = append(plan, compToDeploy{
+				name:   c.Name,
+				jobID:  id,
+				domain: d,
+				req:    mkReq(c, id, d),
+			})
+		}
 	} else {
-		stdLog("preview %s/%s: blob.yaml load failed, using parent jobMeta only: %v", app, branch, err)
+		c := manifest.Component{}
+		if m != nil {
+			c = m.Component
+		}
+		id := previewJobName(app, branch)
+		d := id + "." + s.cfg.BaseDomain
+		plan = append(plan, compToDeploy{
+			name:   "", // single-component case
+			jobID:  id,
+			domain: d,
+			req:    mkReq(c, id, d),
+		})
 	}
 
-	resp, err := s.deployFromSource(ctx, src, req, app)
-	if err != nil {
-		return nil, err
+	// Drive the deploys. If any single component fails we tear down the
+	// ones that already landed so we don't leave half a preview in place.
+	var deployed []compToDeploy
+	for _, c := range plan {
+		_, derr := s.deployFromSource(ctx, src, c.req, app)
+		if derr != nil {
+			// Roll back what we already deployed.
+			for _, prev := range deployed {
+				if e := s.destroyApp(ctx, prev.jobID); e != nil {
+					stdLog("preview rollback %s: destroyApp %s failed: %v", app, prev.jobID, e)
+				}
+			}
+			return nil, fmt.Errorf("deploy component %q: %w", componentLabel(c.name), derr)
+		}
+		deployed = append(deployed, c)
 	}
 
+	// Persist the sentinel. Top-level fields point at the first
+	// component for the single-URL display path; Components is
+	// populated for multi-component previews.
 	p := &api.Preview{
 		App:       app,
 		Branch:    branch,
-		JobID:     previewApp,
-		Domain:    domain,
-		URL:       "https://" + domain,
+		JobID:     deployed[0].jobID,
+		Domain:    deployed[0].domain,
+		URL:       "https://" + deployed[0].domain,
 		CreatedAt: time.Now(),
 	}
-	if resp != nil && resp.URL != "" {
-		p.URL = resp.URL
+	if len(deployed) > 1 || (len(deployed) == 1 && deployed[0].name != "") {
+		for _, c := range deployed {
+			p.Components = append(p.Components, api.PreviewComponent{
+				Name:   c.name,
+				JobID:  c.jobID,
+				Domain: c.domain,
+				URL:    "https://" + c.domain,
+			})
+		}
 	}
 	if err := s.savePreview(p); err != nil {
-		// Don't unwind the deploy on a sentinel-write failure; just log.
 		stdLog("preview save failed for %s/%s: %v (deploy is live anyway)", app, branch, err)
 	}
 	return p, nil
 }
 
-// destroyPreview tears down the synthetic Nomad job and removes the
-// sentinel. Idempotent: missing-job is not an error.
+func componentLabel(name string) string {
+	if name == "" {
+		return "<single>"
+	}
+	return name
+}
+
+// destroyPreview tears down every Nomad job in the preview's branch
+// namespace, then removes the sentinel. We read the sentinel first
+// when present so we know which components to destroy; if it's missing
+// (e.g. the file was nuked manually) we fall back to destroying just
+// the canonical <app>-<branch> job for back-compat with v0.12 previews.
 func (s *Server) destroyPreview(ctx context.Context, app, branch string) error {
 	if !branchRE.MatchString(branch) {
 		return errors.New("invalid branch")
 	}
-	jobName := previewJobName(app, branch)
-	if err := s.destroyApp(ctx, jobName); err != nil {
-		stdLog("preview destroy %s/%s: %v (continuing)", app, branch, err)
+	if p, err := s.loadPreview(app, branch); err == nil {
+		jobs := []string{}
+		if len(p.Components) > 0 {
+			for _, c := range p.Components {
+				jobs = append(jobs, c.JobID)
+			}
+		} else {
+			jobs = append(jobs, p.JobID)
+		}
+		for _, j := range jobs {
+			if err := s.destroyApp(ctx, j); err != nil {
+				stdLog("preview destroy %s/%s: destroyApp %s: %v (continuing)", app, branch, j, err)
+			}
+		}
+	} else {
+		// No sentinel — best effort on the v0.12 single-job shape.
+		jobName := previewJobName(app, branch)
+		if err := s.destroyApp(ctx, jobName); err != nil {
+			stdLog("preview destroy %s/%s: %v (continuing)", app, branch, err)
+		}
 	}
 	_ = os.Remove(s.previewPath(app, branch))
 	return nil

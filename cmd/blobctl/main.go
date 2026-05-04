@@ -114,6 +114,10 @@ Usage:
   blob preview list <app>
   blob preview destroy <app> <branch>
 
+  blob webhook github setup <app>                 Generate HMAC secret + paste-it URL for github webhooks
+  blob webhook github get <app>
+  blob webhook github remove <app>
+
   blob autoscale list
   blob autoscale set <app> --min N --max M --metric cpu|memory|http_qps --target P
                                                   [--cooldown-up 60s] [--cooldown-down 180s]
@@ -124,7 +128,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.12.0"
+var version = "0.13.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -204,6 +208,8 @@ func main() {
 		cmdServices(args)
 	case "preview":
 		cmdPreview(args)
+	case "webhook":
+		cmdWebhook(args)
 	case "doctor":
 		cmdDoctor()
 	case "whoami":
@@ -2150,6 +2156,9 @@ func cmdPreview(args []string) {
 		}
 		fmt.Printf("ready in %s\n  url:    %s\n  job:    %s\n  domain: %s\n",
 			time.Since(t0).Round(100*time.Millisecond), p.URL, p.JobID, p.Domain)
+		for _, c := range p.Components {
+			fmt.Printf("  └─ %s: %s\n", c.Name, c.URL)
+		}
 	case "list", "ls":
 		flags := parseFlags(args[1:])
 		app := positional(flags, 0)
@@ -2164,9 +2173,12 @@ func cmdPreview(args []string) {
 			fmt.Printf("no previews for %s\n", app)
 			return
 		}
-		fmt.Printf("%-22s %-12s %-32s %s\n", "BRANCH", "JOB", "DOMAIN", "CREATED")
+		fmt.Printf("%-22s %-32s %-32s %s\n", "BRANCH", "JOB", "DOMAIN", "CREATED")
 		for _, p := range out.Previews {
-			fmt.Printf("%-22s %-12s %-32s %s\n", p.Branch, p.JobID, p.Domain, p.CreatedAt.Format(time.RFC3339))
+			fmt.Printf("%-22s %-32s %-32s %s\n", p.Branch, p.JobID, p.Domain, p.CreatedAt.Format(time.RFC3339))
+			for _, c := range p.Components {
+				fmt.Printf("  └─ %-19s %-32s %-32s\n", c.Name, c.JobID, c.Domain)
+			}
 		}
 	case "destroy", "rm":
 		flags := parseFlags(args[1:])
@@ -2184,5 +2196,58 @@ func cmdPreview(args []string) {
 		fmt.Printf("destroyed preview %s/%s\n", app, branch)
 	default:
 		die("unknown preview subcommand: %s", args[0])
+	}
+}
+
+// --- webhook receiver setup (v0.13) ---
+//
+// Today only `github` is supported. Provider goes second so we can
+// add gitlab/bitbucket without breaking the URL shape.
+
+func cmdWebhook(args []string) {
+	if len(args) < 2 {
+		die("usage: blob webhook <github> <setup|get|remove> <app>")
+	}
+	provider := args[0]
+	if provider != "github" {
+		die("unsupported provider %q (only 'github' for now)", provider)
+	}
+	sub := args[1]
+	flags := parseFlags(args[2:])
+	app := positional(flags, 0)
+	if app == "" {
+		die("usage: blob webhook github %s <app>", sub)
+	}
+	c := mustClient()
+	switch sub {
+	case "setup":
+		out, err := c.SetupGitHubWebhook(context.Background(), app)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("github webhook configured for %s\n", out.App)
+		fmt.Println()
+		fmt.Println("Paste these into your repo's Settings → Webhooks → Add webhook:")
+		fmt.Printf("  Payload URL:   %s\n", out.URL)
+		fmt.Printf("  Content type:  application/json\n")
+		fmt.Printf("  Secret:        %s\n", out.Secret)
+		fmt.Printf("  SSL:           Enable SSL verification\n")
+		fmt.Printf("  Events:        Send me everything (or just 'Pull requests')\n")
+		fmt.Println()
+		fmt.Println("On pull_request.opened/synchronize → blobd creates a preview at <app>-pr-<N>.<base>")
+		fmt.Println("On pull_request.closed → blobd destroys it.")
+	case "get":
+		out, err := c.GetGitHubWebhook(context.Background(), app)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("app:    %s\nurl:    %s\nsecret: %s\n", out.App, out.URL, out.Secret)
+	case "remove", "rm":
+		if err := c.RemoveGitHubWebhook(context.Background(), app); err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("removed github webhook for %s\n", app)
+	default:
+		die("unknown webhook subcommand: %s", sub)
 	}
 }
