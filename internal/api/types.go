@@ -241,6 +241,26 @@ type PublicDoctorIssue struct {
 	Remediate string `json:"remediate,omitempty"`
 }
 
+// Audit log
+
+type AuditEvent struct {
+	ID           string    `json:"id"`
+	CreatedAt    time.Time `json:"created_at"`
+	Actor        string    `json:"actor"`
+	Method       string    `json:"method"`
+	Path         string    `json:"path"`
+	Action       string    `json:"action"`
+	StatusCode   int       `json:"status_code"`
+	RemoteAddr   string    `json:"remote_addr,omitempty"`
+	UserAgent    string    `json:"user_agent,omitempty"`
+	PreviousHash string    `json:"previous_hash,omitempty"`
+	Hash         string    `json:"hash"`
+}
+
+type ListAuditResponse struct {
+	Events []AuditEvent `json:"events"`
+}
+
 // Volumes
 type Volume struct {
 	Name      string `json:"name"`

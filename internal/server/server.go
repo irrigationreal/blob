@@ -74,6 +74,7 @@ type Server struct {
 	scheduler  *Scheduler
 	autoscaler *autoscaler
 	jobLogs    *jobLogCollector
+	auditMu    sync.Mutex
 	mu         sync.Mutex
 }
 
@@ -128,6 +129,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/v1/secrets", s.handleSecrets)
 	mux.HandleFunc("/v1/secrets/", s.handleSecretItem)
 	mux.HandleFunc("/v1/doctor", s.handleDoctor)
+	mux.HandleFunc("/v1/audit", s.handleAudit)
+	mux.HandleFunc("/v1/audit/", s.handleAuditItem)
 	mux.HandleFunc("/v1/status-pages", s.handleStatusPages)
 	mux.HandleFunc("/v1/status-pages/", s.handleStatusPagesItem)
 	mux.HandleFunc("/status/", s.handlePublicStatusPage)
@@ -190,6 +193,16 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 		ah := r.Header.Get("Authorization")
 		if !strings.HasPrefix(ah, "Bearer ") || subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(ah, "Bearer ")), []byte(s.cfg.Token)) != 1 {
 			writeErr(w, http.StatusUnauthorized, "invalid token")
+			return
+		}
+		if isAuditMutation(r) {
+			aw := &auditResponseWriter{ResponseWriter: w}
+			next.ServeHTTP(aw, r)
+			status := aw.status
+			if status == 0 {
+				status = 200
+			}
+			s.auditMutatingRequest(r, status, auditActor(strings.TrimPrefix(ah, "Bearer ")))
 			return
 		}
 		next.ServeHTTP(w, r)

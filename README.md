@@ -86,6 +86,7 @@ The same platform host runs these via `blob import compose|procfile|fly` → `bl
 | **Nodes**: list, drain, undrain, generate join script          | shipped  |
 | **Resource graph + placement preflight**: persisted Nomad node/allocation capacity, `blob nodes recommend`, and impossible deploy refusal before Nomad scheduling | shipped |
 | **Status pages**: `blob status-pages enable <app>` publishes public HTML + JSON without alloc IDs or secrets | shipped |
+| **Audit log**: append-only hash-chained events for authenticated mutating API actions | shipped |
 | **Doctor** drift / orphan / liveness checks                    | shipped  |
 | **Manifest projection hashes**: deploy records intended job projection and `blob doctor` detects live/on-disk drift | shipped |
 | **Bootstrap script** for turning a fresh server into a Blob    | shipped  |
@@ -109,6 +110,7 @@ Three short docs:
 - **[`docs/host-setup.md`](docs/host-setup.md)** — turn a fresh server into a Blob (one shell script + a systemd unit).
 - **[`docs/joining-nodes.md`](docs/joining-nodes.md)** — add another machine to an existing Blob.
 - **[`docs/operator.md`](docs/operator.md)** — day-2 ops: backups, drains, upgrades, recovering from a dead node.
+- **[`docs/audit.md`](docs/audit.md)** — append-only hash-chained audit log for authenticated write actions.
 - **[`docs/managed-services.md`](docs/managed-services.md)** — managed Postgres: create, bind apps via `services:`, get the DSN, destroy.
 - **[`docs/status-pages.md`](docs/status-pages.md)** — public app status pages with HTML + JSON output.
 
@@ -219,6 +221,9 @@ blob exec <app> -- <cmd ...>
 blob destroy <app> [--yes]
 
 blob domains attach <app> <host> [--mode MODE]
+
+blob audit list [--limit N]
+blob audit show <id>
 
 blob status-pages enable <app>
 blob status-pages list

@@ -66,6 +66,9 @@ Usage:
 
   blob doctor                                     Run platform self-check
 
+  blob audit list [--limit N]                     Show authenticated mutating API actions
+  blob audit show <id>
+
   blob status-pages enable <app>                  Publish /status/<app> HTML + JSON
   blob status-pages list
   blob status-pages show <app>
@@ -178,7 +181,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.29.0"
+var version = "0.30.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -232,6 +235,8 @@ func main() {
 		cmdDomains(args)
 	case "nodes":
 		cmdNodes(args)
+	case "audit":
+		cmdAudit(args)
 	case "status-pages", "statuspage":
 		cmdStatusPages(args)
 	case "volumes":
@@ -1203,6 +1208,44 @@ func cmdVolumes(args []string) {
 	fmt.Printf("%-30s %-20s %s\n", "APP", "VOLUME", "DOCKER NAME")
 	for _, v := range out.Volumes {
 		fmt.Printf("%-30s %-20s %s\n", v.App, v.Name, v.HostName)
+	}
+}
+
+func cmdAudit(args []string) {
+	if len(args) == 0 {
+		die("usage: blob audit <list|show> ...")
+	}
+	c := mustClient()
+	switch args[0] {
+	case "list", "ls":
+		flags := parseFlags(args[1:])
+		limit := atoi(flags["limit"])
+		out, err := c.ListAudit(context.Background(), limit)
+		if err != nil {
+			die("%v", err)
+		}
+		if len(out.Events) == 0 {
+			fmt.Println("no audit events")
+			return
+		}
+		fmt.Printf("%-30s %-20s %-8s %-28s %-4s %s\n", "ID", "TIME", "METHOD", "ACTION", "CODE", "PATH")
+		for _, e := range out.Events {
+			fmt.Printf("%-30s %-20s %-8s %-28s %-4d %s\n", e.ID, e.CreatedAt.Format(time.RFC3339), e.Method, e.Action, e.StatusCode, e.Path)
+		}
+	case "show":
+		flags := parseFlags(args[1:])
+		id := positional(flags, 0)
+		if id == "" {
+			die("usage: blob audit show <id>")
+		}
+		event, err := c.GetAudit(context.Background(), id)
+		if err != nil {
+			die("%v", err)
+		}
+		b, _ := json.MarshalIndent(event, "", "  ")
+		fmt.Println(string(b))
+	default:
+		die("unknown audit subcommand: %s", args[0])
 	}
 }
 

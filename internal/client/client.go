@@ -231,6 +231,26 @@ func (c *Client) DisableStatusPage(ctx context.Context, app string) error {
 	return c.do(ctx, "DELETE", "/v1/status-pages/"+url.PathEscape(app), nil, nil)
 }
 
+func (c *Client) ListAudit(ctx context.Context, limit int) (*api.ListAuditResponse, error) {
+	q := ""
+	if limit > 0 {
+		q = "?limit=" + fmt.Sprintf("%d", limit)
+	}
+	out := &api.ListAuditResponse{}
+	if err := c.do(ctx, "GET", "/v1/audit"+q, nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) GetAudit(ctx context.Context, id string) (*api.AuditEvent, error) {
+	out := &api.AuditEvent{}
+	if err := c.do(ctx, "GET", "/v1/audit/"+url.PathEscape(id), nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *Client) ListNodes(ctx context.Context) (*api.ListNodesResponse, error) {
 	out := &api.ListNodesResponse{}
 	if err := c.do(ctx, "GET", "/v1/nodes", nil, out); err != nil {

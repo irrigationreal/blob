@@ -13,7 +13,7 @@ import (
 	"github.com/darvell/blob/internal/server"
 )
 
-var version = "0.29.0"
+var version = "0.30.0"
 
 func main() {
 	cfg := server.DefaultConfig()
