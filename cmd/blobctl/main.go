@@ -145,6 +145,11 @@ Usage:
   blob scylladb url <name>                        Print cassandra:// pseudo-URI (with password)
   blob scylladb destroy <name> [--yes]
 
+  blob certs add <app> <hostname>                 Bind a custom hostname to an app and request LE cert
+  blob certs list
+  blob certs verify <hostname>                    Probe the live edge for a Let's Encrypt cert
+  blob certs remove <hostname> [--yes]
+
   blob autoscale list
   blob autoscale set <app> --min N --max M --metric cpu|memory|http_qps --target P
                                                   [--cooldown-up 60s] [--cooldown-down 180s]
@@ -155,7 +160,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.21.0"
+var version = "0.22.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -247,6 +252,8 @@ func main() {
 		cmdMongo(args)
 	case "scylladb", "scylla":
 		cmdScylla(args)
+	case "certs":
+		cmdCerts(args)
 	case "doctor":
 		cmdDoctor()
 	case "whoami":
@@ -2705,5 +2712,98 @@ func cmdScylla(args []string) {
 		fmt.Printf("destroyed scylladb %q\n", name)
 	default:
 		die("unknown scylladb subcommand: %s", args[0])
+	}
+}
+
+func cmdCerts(args []string) {
+	if len(args) == 0 {
+		die("usage: blob certs <add|list|verify|remove> ...")
+	}
+	c := mustClient()
+	switch args[0] {
+	case "list", "ls":
+		out, err := c.ListCerts(context.Background())
+		if err != nil {
+			die("%v", err)
+		}
+		if len(out.Certs) == 0 {
+			fmt.Println("no custom-domain cert bindings")
+			return
+		}
+		fmt.Printf("%-40s %-25s %-10s %-30s %s\n", "HOSTNAME", "APP", "VERIFIED", "ISSUER", "LAST PROBE")
+		for _, b := range out.Certs {
+			verified := "no"
+			if b.Verified {
+				verified = "yes"
+			}
+			lp := "-"
+			if !b.LastProbe.IsZero() {
+				lp = b.LastProbe.Format(time.RFC3339)
+			}
+			fmt.Printf("%-40s %-25s %-10s %-30s %s\n", b.Hostname, b.App, verified, b.LastIssuer, lp)
+			if b.LastError != "" {
+				fmt.Printf("    last error: %s\n", b.LastError)
+			}
+		}
+	case "add":
+		flags := parseFlags(args[1:])
+		app := positional(flags, 0)
+		host := positional(flags, 1)
+		if app == "" || host == "" {
+			die("usage: blob certs add <app> <hostname>")
+		}
+		out, err := c.AddCert(context.Background(), app, host)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("bound %s → %s\n", out.Binding.Hostname, out.Binding.App)
+		if len(out.DNSRecords) > 0 {
+			fmt.Println("DNS records to create:")
+			for _, r := range out.DNSRecords {
+				fmt.Printf("  %s %s %s (TTL %d)\n", r.Type, r.Name, r.Value, r.TTL)
+			}
+		}
+		if out.Note != "" {
+			fmt.Println(out.Note)
+		}
+	case "verify":
+		flags := parseFlags(args[1:])
+		host := positional(flags, 0)
+		if host == "" {
+			die("usage: blob certs verify <hostname>")
+		}
+		out, err := c.VerifyCert(context.Background(), host)
+		if err != nil {
+			die("%v", err)
+		}
+		b := out.Binding
+		if b.Verified {
+			fmt.Printf("verified %s — issuer %q\n", b.Hostname, b.LastIssuer)
+		} else {
+			fmt.Printf("NOT verified %s\n", b.Hostname)
+			if b.LastError != "" {
+				fmt.Printf("  %s\n", b.LastError)
+			}
+		}
+	case "remove", "rm":
+		flags := parseFlags(args[1:])
+		host := positional(flags, 0)
+		if host == "" {
+			die("usage: blob certs remove <hostname>")
+		}
+		if flags["yes"] != "true" {
+			fmt.Printf("remove cert binding %q? (the LE cert in /srv/traefik/acme.json is preserved; type the hostname to confirm) ", host)
+			var line string
+			fmt.Fscanln(os.Stdin, &line)
+			if line != host {
+				die("aborted")
+			}
+		}
+		if err := c.RemoveCert(context.Background(), host); err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("removed %q\n", host)
+	default:
+		die("unknown certs subcommand: %s", args[0])
 	}
 }

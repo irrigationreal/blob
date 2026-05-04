@@ -869,3 +869,42 @@ func (c *Client) ScyllaURL(ctx context.Context, name string) (string, error) {
 func (c *Client) DestroyScylla(ctx context.Context, name string) error {
 	return c.do(ctx, "DELETE", "/v1/scylladb/"+url.PathEscape(name), nil, nil)
 }
+
+// --- Custom-domain TLS bindings (v0.22) ---
+
+func (c *Client) ListCerts(ctx context.Context) (*api.ListCertsResponse, error) {
+	out := &api.ListCertsResponse{}
+	if err := c.do(ctx, "GET", "/v1/certs", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) AddCert(ctx context.Context, app, hostname string) (*api.AddCertResponse, error) {
+	out := &api.AddCertResponse{}
+	req := &api.AddCertRequest{App: app, Hostname: hostname}
+	if err := c.do(ctx, "POST", "/v1/certs", req, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) GetCert(ctx context.Context, hostname string) (*api.CertBinding, error) {
+	out := &api.CertBinding{}
+	if err := c.do(ctx, "GET", "/v1/certs/"+url.PathEscape(hostname), nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) VerifyCert(ctx context.Context, hostname string) (*api.VerifyCertResponse, error) {
+	out := &api.VerifyCertResponse{}
+	if err := c.do(ctx, "POST", "/v1/certs/"+url.PathEscape(hostname)+"/verify", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) RemoveCert(ctx context.Context, hostname string) error {
+	return c.do(ctx, "DELETE", "/v1/certs/"+url.PathEscape(hostname), nil, nil)
+}

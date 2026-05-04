@@ -765,3 +765,35 @@ type ListScyllaResponse struct {
 type ScyllaURL struct {
 	URL string `json:"url"`
 }
+
+// Custom-domain TLS bindings (v0.22). A CertBinding records a hostname
+// the operator has asked the platform to obtain a Let's Encrypt cert for
+// (via traefik's http-01 resolver) and route to a specific app.
+type CertBinding struct {
+	App        string    `json:"app"`
+	Hostname   string    `json:"hostname"`
+	CreatedAt  time.Time `json:"created_at"`
+	Verified   bool      `json:"verified"`            // last probe saw a non-blob-issued cert with this SAN
+	LastProbe  time.Time `json:"last_probe,omitempty"`
+	LastIssuer string    `json:"last_issuer,omitempty"`
+	LastError  string    `json:"last_error,omitempty"`
+}
+
+type AddCertRequest struct {
+	App      string `json:"app"`
+	Hostname string `json:"hostname"`
+}
+
+type AddCertResponse struct {
+	Binding    CertBinding `json:"binding"`
+	DNSRecords []DNSRecord `json:"dns_records,omitempty"`
+	Note       string      `json:"note,omitempty"`
+}
+
+type ListCertsResponse struct {
+	Certs []CertBinding `json:"certs"`
+}
+
+type VerifyCertResponse struct {
+	Binding CertBinding `json:"binding"`
+}
