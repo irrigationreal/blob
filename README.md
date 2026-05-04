@@ -84,6 +84,7 @@ The same platform host runs these via `blob import compose|procfile|fly` → `bl
 | **Open** in browser (`blob open`)                              | shipped  |
 | **Volumes**: per-app Docker named volumes                      | shipped  |
 | **Nodes**: list, drain, undrain, generate join script          | shipped  |
+| **Resource graph**: persisted Nomad node + allocation capacity model; nodes list shows CPU/memory/disk reserved/available/total | shipped |
 | **Doctor** drift / orphan / liveness checks                    | shipped  |
 | **Manifest projection hashes**: deploy records intended job projection and `blob doctor` detects live/on-disk drift | shipped |
 | **Bootstrap script** for turning a fresh server into a Blob    | shipped  |
@@ -95,7 +96,6 @@ The same platform host runs these via `blob import compose|procfile|fly` → `bl
 The full v1 spec ([`docs/the-blob-spec.md`](docs/the-blob-spec.md)) is the destination. The runtime ships the deploy core, operability surfaces, and the first managed services. Honest gap list:
 
 - Blebs warm pool, hot journal volumes, rewind
-- Resource graph
 - **Tempo/Prometheus**: shipped in v0.10 — see managed services above
 - **Multi-region** active-passive failover
 - **Status pages**, cost rollups, plugins, web console, GPU/confidential compute

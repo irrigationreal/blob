@@ -1452,7 +1452,21 @@ func (s *Server) runDoctor(ctx context.Context) api.DoctorResponse {
 			"Ensure Nomad is running and NomadAddr is correct")
 	}
 
-	// 3. job statuses (skip periodic instances — they exit dead by design)
+	// 3. resource graph from Nomad nodes + active allocations.
+	resp.Checked++
+	graph, graphErr := s.collectResourceGraph(ctx)
+	if graphErr != nil {
+		if cached, ok := s.loadResourceGraph(); ok {
+			graph = cached
+			add("P3", "capacity", "", "resource graph refresh failed", graphErr.Error(),
+				"Using the last persisted graph; check Nomad API health and rerun `blob doctor`")
+		} else {
+			add("P2", "capacity", "", "resource graph unavailable", graphErr.Error(),
+				"Check Nomad API health; `blob nodes list` rebuilds the graph from /v1/node/* resources and allocations")
+		}
+	}
+
+	// 4. job statuses (skip periodic instances — they exit dead by design)
 	resp.Checked++
 	if body, err := s.nomadGET(ctx, "/v1/jobs"); err == nil {
 		var jobs []nomadJob
@@ -1473,7 +1487,13 @@ func (s *Server) runDoctor(ctx context.Context) api.DoctorResponse {
 					add("P1", "nomad", j.ID, "job is dead", "",
 						fmt.Sprintf("`blob logs %s -n 200` to inspect failure, then `blob deploy` to redeploy or `blob destroy %s`", j.ID, j.ID))
 				} else if j.Status == "pending" {
-					add("P2", "nomad", j.ID, "job is pending placement", "", "Check fleet capacity and node eligibility")
+					detail, fix := "", "Check fleet capacity and node eligibility"
+					cat := "nomad"
+					if graph != nil {
+						detail, fix = s.placementRemediation(ctx, j.ID, graph)
+						cat = "capacity"
+					}
+					add("P2", cat, j.ID, "job is pending placement", detail, fix)
 				}
 			}
 		}

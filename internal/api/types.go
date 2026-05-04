@@ -169,7 +169,7 @@ type AttachDomainRequest struct {
 // Doctor
 type DoctorIssue struct {
 	Severity  string `json:"severity"` // P1 | P2 | P3 | info
-	Category  string `json:"category"` // routing | nomad | registry | secrets | drift | host
+	Category  string `json:"category"` // routing | nomad | registry | secrets | drift | capacity | host
 	App       string `json:"app,omitempty"`
 	Title     string `json:"title"`
 	Detail    string `json:"detail,omitempty"`
@@ -194,20 +194,40 @@ type ListVolumesResponse struct {
 }
 
 // Nodes
+type ResourceUsage struct {
+	Total     int `json:"total"`
+	Reserved  int `json:"reserved"`
+	Available int `json:"available"`
+}
+
+type NodeResources struct {
+	CPU      ResourceUsage `json:"cpu"`
+	MemoryMB ResourceUsage `json:"memory_mb"`
+	DiskMB   ResourceUsage `json:"disk_mb"`
+}
+
 type Node struct {
-	ID         string            `json:"id"`
-	Name       string            `json:"name"`
-	Address    string            `json:"address"`
-	Datacenter string            `json:"datacenter"`
-	Status     string            `json:"status"`   // ready | down | initializing
-	Eligible   string            `json:"eligible"` // eligible | ineligible
-	Drain      bool              `json:"drain"`
-	NodeClass  string            `json:"node_class,omitempty"`
-	Labels     map[string]string `json:"labels,omitempty"`
+	ID                string            `json:"id"`
+	Name              string            `json:"name"`
+	Address           string            `json:"address"`
+	Datacenter        string            `json:"datacenter"`
+	Status            string            `json:"status"`   // ready | down | initializing
+	Eligible          string            `json:"eligible"` // eligible | ineligible
+	Drain             bool              `json:"drain"`
+	NodeClass         string            `json:"node_class,omitempty"`
+	Labels            map[string]string `json:"labels,omitempty"`
+	Resources         NodeResources     `json:"resources,omitempty"`
+	ActiveAllocations int               `json:"active_allocations,omitempty"`
+}
+
+type ResourceGraph struct {
+	GeneratedAt time.Time `json:"generated_at"`
+	Nodes       []Node    `json:"nodes"`
 }
 
 type ListNodesResponse struct {
-	Nodes []Node `json:"nodes"`
+	GeneratedAt time.Time `json:"generated_at,omitempty"`
+	Nodes       []Node    `json:"nodes"`
 }
 
 type JoinTokenResponse struct {

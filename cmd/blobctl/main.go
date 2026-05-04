@@ -54,7 +54,7 @@ Usage:
   blob secrets set <name> [--env ENV] [--from FILE | --value V]
   blob secrets unset <name> [--env ENV]
 
-  blob nodes list                                 List Nomad client nodes
+  blob nodes list                                 List Nomad client nodes + reserved/available capacity
   blob nodes drain <id>                           Drain a node (move workloads off)
   blob nodes undrain <id>                         Stop draining
   blob nodes join                                 Print a one-liner to join a new server to the Blob
@@ -170,7 +170,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.26.0"
+var version = "0.27.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -1089,7 +1089,7 @@ func cmdNodes(args []string) {
 			fmt.Println("no nodes")
 			return
 		}
-		fmt.Printf("%-12s %-20s %-15s %-10s %-10s %s\n", "ID", "NAME", "ADDR", "STATUS", "ELIGIBLE", "DC")
+		fmt.Printf("%-10s %-18s %-15s %-8s %-10s %-4s %-17s %-21s %-23s %s\n", "ID", "NAME", "ADDR", "STATUS", "ELIGIBLE", "DC", "CPU R/A/T", "MEM R/A/T", "DISK R/A/T", "ALLOC")
 		for _, n := range out.Nodes {
 			id := n.ID
 			if len(id) > 8 {
@@ -1099,7 +1099,9 @@ func cmdNodes(args []string) {
 			if n.Drain {
 				elig = "draining"
 			}
-			fmt.Printf("%-12s %-20s %-15s %-10s %-10s %s\n", id, n.Name, n.Address, n.Status, elig, n.Datacenter)
+			fmt.Printf("%-10s %-18s %-15s %-8s %-10s %-4s %-17s %-21s %-23s %d\n",
+				id, n.Name, n.Address, n.Status, elig, n.Datacenter,
+				formatUsage(n.Resources.CPU, ""), formatUsage(n.Resources.MemoryMB, "MiB"), formatUsage(n.Resources.DiskMB, "MiB"), n.ActiveAllocations)
 		}
 	case "drain":
 		flags := parseFlags(args[1:])
@@ -1132,6 +1134,13 @@ func cmdNodes(args []string) {
 	default:
 		die("unknown nodes subcommand: %s", args[0])
 	}
+}
+
+func formatUsage(u api.ResourceUsage, suffix string) string {
+	if suffix != "" {
+		return fmt.Sprintf("%d/%d/%d%s", u.Reserved, u.Available, u.Total, suffix)
+	}
+	return fmt.Sprintf("%d/%d/%d", u.Reserved, u.Available, u.Total)
 }
 
 func cmdVolumes(args []string) {

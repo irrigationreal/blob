@@ -59,36 +59,14 @@ func (s *Server) handleNodeItem(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listNodes(ctx context.Context) (*api.ListNodesResponse, error) {
-	body, err := s.nomadGET(ctx, "/v1/nodes")
+	graph, err := s.collectResourceGraph(ctx)
 	if err != nil {
+		if cached, ok := s.loadResourceGraph(); ok {
+			return &api.ListNodesResponse{GeneratedAt: cached.GeneratedAt, Nodes: cached.Nodes}, nil
+		}
 		return nil, err
 	}
-	var raw []struct {
-		ID, Name, Datacenter, Status, NodeClass string
-		Address, HTTPAddr                       string
-		Drivers                                 map[string]any
-		SchedulingEligibility                   string
-		Drain                                   bool
-		Attributes                              map[string]string `json:"-"`
-	}
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, err
-	}
-	out := &api.ListNodesResponse{}
-	for _, n := range raw {
-		out.Nodes = append(out.Nodes, api.Node{
-			ID:         n.ID,
-			Name:       n.Name,
-			Address:    n.Address,
-			Datacenter: n.Datacenter,
-			Status:     n.Status,
-			Eligible:   n.SchedulingEligibility,
-			Drain:      n.Drain,
-			NodeClass:  n.NodeClass,
-		})
-	}
-	sort.Slice(out.Nodes, func(i, j int) bool { return out.Nodes[i].Name < out.Nodes[j].Name })
-	return out, nil
+	return &api.ListNodesResponse{GeneratedAt: graph.GeneratedAt, Nodes: graph.Nodes}, nil
 }
 
 func (s *Server) drainNode(ctx context.Context, id string, on bool) error {
