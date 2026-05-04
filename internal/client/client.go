@@ -202,6 +202,35 @@ func (c *Client) Doctor(ctx context.Context) (*api.DoctorResponse, error) {
 	return out, nil
 }
 
+func (c *Client) ListStatusPages(ctx context.Context) (*api.ListStatusPagesResponse, error) {
+	out := &api.ListStatusPagesResponse{}
+	if err := c.do(ctx, "GET", "/v1/status-pages", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) EnableStatusPage(ctx context.Context, app string) (*api.StatusPageResponse, error) {
+	out := &api.StatusPageResponse{}
+	req := &api.EnableStatusPageRequest{App: app}
+	if err := c.do(ctx, "POST", "/v1/status-pages", req, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) ShowStatusPage(ctx context.Context, app string) (*api.StatusPageResponse, error) {
+	out := &api.StatusPageResponse{}
+	if err := c.do(ctx, "GET", "/v1/status-pages/"+url.PathEscape(app), nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) DisableStatusPage(ctx context.Context, app string) error {
+	return c.do(ctx, "DELETE", "/v1/status-pages/"+url.PathEscape(app), nil, nil)
+}
+
 func (c *Client) ListNodes(ctx context.Context) (*api.ListNodesResponse, error) {
 	out := &api.ListNodesResponse{}
 	if err := c.do(ctx, "GET", "/v1/nodes", nil, out); err != nil {

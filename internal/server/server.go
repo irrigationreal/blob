@@ -128,6 +128,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/v1/secrets", s.handleSecrets)
 	mux.HandleFunc("/v1/secrets/", s.handleSecretItem)
 	mux.HandleFunc("/v1/doctor", s.handleDoctor)
+	mux.HandleFunc("/v1/status-pages", s.handleStatusPages)
+	mux.HandleFunc("/v1/status-pages/", s.handleStatusPagesItem)
+	mux.HandleFunc("/status/", s.handlePublicStatusPage)
 	mux.HandleFunc("/v1/nodes", s.handleNodes)
 	mux.HandleFunc("/v1/nodes/recommend", s.handleNodeRecommend)
 	mux.HandleFunc("/v1/nodes/", s.handleNodeItem)
@@ -176,7 +179,7 @@ func (s *Server) Routes() http.Handler {
 
 func (s *Server) withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" || r.URL.Path == "/metrics" || r.URL.Path == "/v1/webhooks/github" {
+		if r.URL.Path == "/healthz" || r.URL.Path == "/metrics" || r.URL.Path == "/v1/webhooks/github" || strings.HasPrefix(r.URL.Path, "/status/") {
 			next.ServeHTTP(w, r)
 			return
 		}

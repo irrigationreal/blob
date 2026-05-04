@@ -181,6 +181,66 @@ type DoctorResponse struct {
 	Checked int           `json:"checked"`
 }
 
+// Status pages
+
+type StatusPageBinding struct {
+	App       string    `json:"app"`
+	URL       string    `json:"url,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type EnableStatusPageRequest struct {
+	App string `json:"app"`
+}
+
+type ListStatusPagesResponse struct {
+	Pages []StatusPageBinding `json:"pages"`
+}
+
+type StatusPageResponse struct {
+	Binding StatusPageBinding `json:"binding"`
+	Status  PublicStatusPage  `json:"status"`
+}
+
+type PublicStatusPage struct {
+	App          string              `json:"app"`
+	URL          string              `json:"url"`
+	Overall      string              `json:"overall"`
+	GeneratedAt  time.Time           `json:"generated_at"`
+	AppStatus    PublicAppStatus     `json:"app_status"`
+	RouteHealth  RouteHealth         `json:"route_health"`
+	DoctorIssues []PublicDoctorIssue `json:"doctor_issues"`
+}
+
+type PublicAppStatus struct {
+	App       string    `json:"app"`
+	Form      string    `json:"form,omitempty"`
+	Domain    string    `json:"domain,omitempty"`
+	URL       string    `json:"url,omitempty"`
+	Status    string    `json:"status"`
+	Replicas  int       `json:"replicas"`
+	UpdatedAt time.Time `json:"updated_at,omitempty"`
+}
+
+type RouteHealth struct {
+	URL        string    `json:"url,omitempty"`
+	Status     string    `json:"status"`
+	OK         bool      `json:"ok"`
+	StatusCode int       `json:"status_code,omitempty"`
+	LatencyMS  int64     `json:"latency_ms,omitempty"`
+	CheckedAt  time.Time `json:"checked_at,omitempty"`
+	Error      string    `json:"error,omitempty"`
+}
+
+type PublicDoctorIssue struct {
+	Severity  string `json:"severity"`
+	Category  string `json:"category"`
+	App       string `json:"app,omitempty"`
+	Title     string `json:"title"`
+	Detail    string `json:"detail,omitempty"`
+	Remediate string `json:"remediate,omitempty"`
+}
+
 // Volumes
 type Volume struct {
 	Name      string `json:"name"`

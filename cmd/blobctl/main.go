@@ -66,6 +66,11 @@ Usage:
 
   blob doctor                                     Run platform self-check
 
+  blob status-pages enable <app>                  Publish /status/<app> HTML + JSON
+  blob status-pages list
+  blob status-pages show <app>
+  blob status-pages disable <app> [--yes]
+
   blob postgres list
   blob postgres create <name> [--version V] [--database D]
   blob postgres url <name>                        Print full DATABASE_URL (with password)
@@ -173,7 +178,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.28.0"
+var version = "0.29.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -227,6 +232,8 @@ func main() {
 		cmdDomains(args)
 	case "nodes":
 		cmdNodes(args)
+	case "status-pages", "statuspage":
+		cmdStatusPages(args)
 	case "volumes":
 		cmdVolumes(args)
 	case "secrets":
@@ -1196,6 +1203,105 @@ func cmdVolumes(args []string) {
 	fmt.Printf("%-30s %-20s %s\n", "APP", "VOLUME", "DOCKER NAME")
 	for _, v := range out.Volumes {
 		fmt.Printf("%-30s %-20s %s\n", v.App, v.Name, v.HostName)
+	}
+}
+
+func cmdStatusPages(args []string) {
+	if len(args) == 0 {
+		die("usage: blob status-pages <enable|list|show|disable> ...")
+	}
+	c := mustClient()
+	switch args[0] {
+	case "enable":
+		flags := parseFlags(args[1:])
+		app := positional(flags, 0)
+		if app == "" {
+			die("usage: blob status-pages enable <app>")
+		}
+		out, err := c.EnableStatusPage(context.Background(), app)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("enabled status page for %s\n", out.Binding.App)
+		fmt.Printf("url:     %s\n", out.Binding.URL)
+		fmt.Printf("overall: %s\n", out.Status.Overall)
+	case "list", "ls":
+		out, err := c.ListStatusPages(context.Background())
+		if err != nil {
+			die("%v", err)
+		}
+		if len(out.Pages) == 0 {
+			fmt.Println("no status pages")
+			return
+		}
+		fmt.Printf("%-30s %-60s %s\n", "APP", "URL", "CREATED")
+		for _, p := range out.Pages {
+			fmt.Printf("%-30s %-60s %s\n", p.App, p.URL, p.CreatedAt.Format(time.RFC3339))
+		}
+	case "show":
+		flags := parseFlags(args[1:])
+		app := positional(flags, 0)
+		if app == "" {
+			die("usage: blob status-pages show <app>")
+		}
+		out, err := c.ShowStatusPage(context.Background(), app)
+		if err != nil {
+			die("%v", err)
+		}
+		printStatusPage(out)
+	case "disable", "rm":
+		flags := parseFlags(args[1:])
+		app := positional(flags, 0)
+		if app == "" {
+			die("usage: blob status-pages disable <app> [--yes]")
+		}
+		if flags["yes"] != "true" {
+			fmt.Printf("disable status page for %q? type the app name to confirm: ", app)
+			var line string
+			fmt.Fscanln(os.Stdin, &line)
+			if line != app {
+				die("aborted")
+			}
+		}
+		if err := c.DisableStatusPage(context.Background(), app); err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("disabled status page for %s\n", app)
+	default:
+		die("unknown status-pages subcommand: %s", args[0])
+	}
+}
+
+func printStatusPage(out *api.StatusPageResponse) {
+	fmt.Printf("app:      %s\n", out.Binding.App)
+	fmt.Printf("url:      %s\n", out.Binding.URL)
+	fmt.Printf("overall:  %s\n", out.Status.Overall)
+	fmt.Printf("app:      %s (%d replicas)\n", out.Status.AppStatus.Status, out.Status.AppStatus.Replicas)
+	fmt.Printf("route:    %s", out.Status.RouteHealth.Status)
+	if out.Status.RouteHealth.StatusCode != 0 {
+		fmt.Printf(" HTTP %d", out.Status.RouteHealth.StatusCode)
+	}
+	if out.Status.RouteHealth.LatencyMS != 0 {
+		fmt.Printf(" %dms", out.Status.RouteHealth.LatencyMS)
+	}
+	if out.Status.RouteHealth.Error != "" {
+		fmt.Printf(" - %s", out.Status.RouteHealth.Error)
+	}
+	fmt.Println()
+	if len(out.Status.DoctorIssues) == 0 {
+		fmt.Println("issues:   none")
+		return
+	}
+	fmt.Println("issues:")
+	for _, issue := range out.Status.DoctorIssues {
+		fmt.Printf("  [%s] %s", issue.Severity, issue.Title)
+		if issue.App != "" {
+			fmt.Printf(" (%s)", issue.App)
+		}
+		fmt.Println()
+		if issue.Detail != "" {
+			fmt.Printf("       %s\n", issue.Detail)
+		}
 	}
 }
 
