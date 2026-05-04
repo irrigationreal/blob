@@ -31,6 +31,8 @@ Usage:
   blob import fly <path>                          Translate fly.toml → blob.yaml
   blob login --endpoint URL [--token T]           Save endpoint and token
   blob deploy [--name N] [--port P] [--env ENV]   Deploy current folder
+  blob deploy --static [--root DIR]               Force static-site form (else auto-detected
+                                                  from index.html when no blob.yaml exists)
   blob deploy --from <kind> <path>                Import then deploy in one shot
   blob list                                       List apps
   blob status <app>                               Show one app
@@ -143,7 +145,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.17.0"
+var version = "0.18.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -569,6 +571,32 @@ func cmdDeploy(args []string) {
 	}
 	if v := flags["form"]; v != "" {
 		m.Form = v
+	}
+	// --static is a shorthand for `--form static --root .`. Useful for
+	// `blob deploy --static .` in any folder with index.html. We also
+	// auto-detect the static path when no blob.yaml is present and the
+	// CWD has an index.html with no Dockerfile — same shape detect.Detect
+	// uses for `blob init`, just folded into the deploy entry so the
+	// user doesn't need a manifest.
+	if flags["static"] == "true" {
+		m.Form = "static"
+		if m.Root == "" {
+			m.Root = "."
+		}
+	} else if m.Form == "" {
+		// auto-detect static when there's no blob.yaml AND no manifest-set form
+		// AND the source has the static-site shape.
+		if _, err := os.Stat("blob.yaml"); err != nil {
+			if _, err := os.Stat("index.html"); err == nil {
+				if _, err := os.Stat("Dockerfile"); err != nil {
+					m.Form = "static"
+					if m.Root == "" {
+						m.Root = "."
+					}
+					fmt.Println("auto-detected static site (index.html present, no Dockerfile)")
+				}
+			}
+		}
 	}
 	if m.Form == "" {
 		m.Form = "web-service"
