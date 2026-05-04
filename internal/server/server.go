@@ -138,6 +138,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/v1/status-pages", s.handleStatusPages)
 	mux.HandleFunc("/v1/status-pages/", s.handleStatusPagesItem)
 	mux.HandleFunc("/status/", s.handlePublicStatusPage)
+	mux.HandleFunc("/v1/costs", s.handleCosts)
+	mux.HandleFunc("/v1/costs/", s.handleCosts)
 	mux.HandleFunc("/v1/nodes", s.handleNodes)
 	mux.HandleFunc("/v1/nodes/recommend", s.handleNodeRecommend)
 	mux.HandleFunc("/v1/nodes/", s.handleNodeItem)

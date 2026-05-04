@@ -319,6 +319,39 @@ func (c *Client) RecommendPlacement(ctx context.Context, cpu, memory, disk int) 
 	return out, nil
 }
 
+func (c *Client) CostSummary(ctx context.Context, monthlyUSD float64) (*api.CostSnapshot, error) {
+	out := &api.CostSnapshot{}
+	if err := c.do(ctx, "GET", costPath("/v1/costs", monthlyUSD), nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) CostApps(ctx context.Context, monthlyUSD float64) (*api.CostSnapshot, error) {
+	out := &api.CostSnapshot{}
+	if err := c.do(ctx, "GET", costPath("/v1/costs/apps", monthlyUSD), nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) CostNodes(ctx context.Context, monthlyUSD float64) (*api.CostSnapshot, error) {
+	out := &api.CostSnapshot{}
+	if err := c.do(ctx, "GET", costPath("/v1/costs/nodes", monthlyUSD), nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func costPath(path string, monthlyUSD float64) string {
+	if monthlyUSD <= 0 {
+		return path
+	}
+	q := url.Values{}
+	q.Set("monthly_usd", fmt.Sprintf("%.2f", monthlyUSD))
+	return path + "?" + q.Encode()
+}
+
 func (c *Client) DrainNode(ctx context.Context, id string, on bool) error {
 	if on {
 		return c.do(ctx, "POST", "/v1/nodes/"+url.PathEscape(id)+"/drain", nil, nil)

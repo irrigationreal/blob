@@ -62,6 +62,10 @@ Usage:
   blob nodes undrain <id>                         Stop draining
   blob nodes join                                 Print a one-liner to join a new server to the Blob
 
+  blob costs summary [--monthly-usd N]            Fleet resource accounting rollup
+  blob costs apps [--monthly-usd N]               Per-app resource accounting
+  blob costs nodes [--monthly-usd N]              Per-node resource accounting
+
   blob volumes list                               List per-app Docker volumes
 
   blob doctor                                     Run platform self-check
@@ -188,7 +192,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.31.0"
+var version = "0.32.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -242,6 +246,8 @@ func main() {
 		cmdDomains(args)
 	case "nodes":
 		cmdNodes(args)
+	case "costs", "cost":
+		cmdCosts(args)
 	case "audit":
 		cmdAudit(args)
 	case "identity":
@@ -1199,6 +1205,85 @@ func formatUsage(u api.ResourceUsage, suffix string) string {
 		return fmt.Sprintf("%d/%d/%d%s", u.Reserved, u.Available, u.Total, suffix)
 	}
 	return fmt.Sprintf("%d/%d/%d", u.Reserved, u.Available, u.Total)
+}
+
+func cmdCosts(args []string) {
+	if len(args) == 0 {
+		die("usage: blob costs <summary|apps|nodes> [--monthly-usd N]")
+	}
+	flags := parseFlags(args[1:])
+	monthlyUSD, _ := strconv.ParseFloat(flags["monthly-usd"], 64)
+	c := mustClient()
+	switch args[0] {
+	case "summary":
+		out, err := c.CostSummary(context.Background(), monthlyUSD)
+		if err != nil {
+			die("%v", err)
+		}
+		printCostSummary(out)
+	case "apps":
+		out, err := c.CostApps(context.Background(), monthlyUSD)
+		if err != nil {
+			die("%v", err)
+		}
+		printCostApps(out.Apps)
+	case "nodes":
+		out, err := c.CostNodes(context.Background(), monthlyUSD)
+		if err != nil {
+			die("%v", err)
+		}
+		printCostNodes(out.Nodes)
+	default:
+		die("unknown costs subcommand: %s", args[0])
+	}
+}
+
+func printCostSummary(out *api.CostSnapshot) {
+	s := out.Summary
+	fmt.Printf("generated: %s\n", out.GeneratedAt.Format(time.RFC3339))
+	fmt.Printf("nodes:     %d\n", s.NodeCount)
+	fmt.Printf("apps:      %d\n", s.AppCount)
+	fmt.Printf("allocs:    %d\n", s.ActiveAllocations)
+	fmt.Printf("cpu:       %s\n", formatUsage(s.CPU, ""))
+	fmt.Printf("memory:    %s\n", formatUsage(s.MemoryMB, "MiB"))
+	fmt.Printf("disk:      %s\n", formatUsage(s.DiskMB, "MiB"))
+	if s.MonthlyEstimateUSD > 0 {
+		fmt.Printf("estimate:  $%.2f/mo\n", s.MonthlyEstimateUSD)
+	}
+}
+
+func printCostApps(apps []api.CostApp) {
+	if len(apps) == 0 {
+		fmt.Println("no active app allocations")
+		return
+	}
+	fmt.Printf("%-32s %-8s %-8s %-10s %-10s %-7s %-28s %s\n", "APP", "CPU", "MEM", "DISK", "ALLOC", "EST", "NODES", "ENV")
+	for _, a := range apps {
+		est := "-"
+		if a.MonthlyEstimateUSD > 0 {
+			est = fmt.Sprintf("$%.2f", a.MonthlyEstimateUSD)
+		}
+		fmt.Printf("%-32s %-8d %-8d %-10d %-10d %-7s %-28s %s\n", a.App, a.CPU, a.MemoryMB, a.DiskMB, a.Allocations, est, strings.Join(a.Nodes, ","), a.Environment)
+	}
+}
+
+func printCostNodes(nodes []api.CostNode) {
+	if len(nodes) == 0 {
+		fmt.Println("no nodes")
+		return
+	}
+	fmt.Printf("%-10s %-18s %-15s %-8s %-10s %-17s %-21s %-23s %-7s %s\n", "ID", "NAME", "ADDR", "STATUS", "ELIGIBLE", "CPU R/A/T", "MEM R/A/T", "DISK R/A/T", "EST", "ALLOC")
+	for _, n := range nodes {
+		id := n.ID
+		if len(id) > 8 {
+			id = id[:8]
+		}
+		est := "-"
+		if n.MonthlyEstimateUSD > 0 {
+			est = fmt.Sprintf("$%.2f", n.MonthlyEstimateUSD)
+		}
+		fmt.Printf("%-10s %-18s %-15s %-8s %-10s %-17s %-21s %-23s %-7s %d\n", id, n.Name, n.Address, n.Status, n.Eligible, formatUsage(n.CPU, ""), formatUsage(n.MemoryMB, "MiB"), formatUsage(n.DiskMB, "MiB"), est, n.ActiveAllocations)
+	}
 }
 
 func cmdVolumes(args []string) {

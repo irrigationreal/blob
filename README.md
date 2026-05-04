@@ -88,6 +88,7 @@ The same platform host runs these via `blob import compose|procfile|fly` → `bl
 | **Status pages**: `blob status-pages enable <app>` publishes public HTML + JSON without alloc IDs or secrets | shipped |
 | **Audit log**: append-only hash-chained events for authenticated mutating API actions | shipped |
 | **Identity/RBAC**: scoped service tokens with per-token grants | shipped |
+| **Cost rollups**: `blob costs summary/apps/nodes` reports reserved resources and optional monthly estimates | shipped |
 | **Doctor** drift / orphan / liveness checks                    | shipped  |
 | **Manifest projection hashes**: deploy records intended job projection and `blob doctor` detects live/on-disk drift | shipped |
 | **Bootstrap script** for turning a fresh server into a Blob    | shipped  |
@@ -113,6 +114,7 @@ Three short docs:
 - **[`docs/operator.md`](docs/operator.md)** — day-2 ops: backups, drains, upgrades, recovering from a dead node.
 - **[`docs/audit.md`](docs/audit.md)** — append-only hash-chained audit log for authenticated write actions.
 - **[`docs/identity.md`](docs/identity.md)** — scoped service tokens and grants for automation.
+- **[`docs/costs.md`](docs/costs.md)** — resource accounting and optional monthly cost rollups.
 - **[`docs/managed-services.md`](docs/managed-services.md)** — managed Postgres: create, bind apps via `services:`, get the DSN, destroy.
 - **[`docs/status-pages.md`](docs/status-pages.md)** — public app status pages with HTML + JSON output.
 
@@ -233,6 +235,10 @@ blob identity tokens revoke <id> [--yes]
 blob identity grants list [--token ID]
 blob identity grants add <id> <scope>
 blob identity grants revoke <id> <scope> [--yes]
+
+blob costs summary [--monthly-usd N]
+blob costs apps [--monthly-usd N]
+blob costs nodes [--monthly-usd N]
 
 blob status-pages enable <app>
 blob status-pages list

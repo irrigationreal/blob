@@ -363,6 +363,50 @@ type ListNodesResponse struct {
 	Nodes       []Node    `json:"nodes"`
 }
 
+// Cost/resource accounting
+type CostSummary struct {
+	GeneratedAt        time.Time     `json:"generated_at"`
+	NodeCount          int           `json:"node_count"`
+	AppCount           int           `json:"app_count"`
+	ActiveAllocations  int           `json:"active_allocations"`
+	CPU                ResourceUsage `json:"cpu"`
+	MemoryMB           ResourceUsage `json:"memory_mb"`
+	DiskMB             ResourceUsage `json:"disk_mb"`
+	MonthlyEstimateUSD float64       `json:"monthly_estimate_usd,omitempty"`
+}
+
+type CostApp struct {
+	App                string   `json:"app"`
+	Environment        string   `json:"environment,omitempty"`
+	CPU                int      `json:"cpu_shares"`
+	MemoryMB           int      `json:"memory_mb"`
+	DiskMB             int      `json:"disk_mb"`
+	Allocations        int      `json:"allocations"`
+	Nodes              []string `json:"nodes"`
+	MonthlyEstimateUSD float64  `json:"monthly_estimate_usd,omitempty"`
+}
+
+type CostNode struct {
+	ID                 string        `json:"id"`
+	Name               string        `json:"name"`
+	Address            string        `json:"address"`
+	Datacenter         string        `json:"datacenter"`
+	Status             string        `json:"status"`
+	Eligible           string        `json:"eligible"`
+	CPU                ResourceUsage `json:"cpu"`
+	MemoryMB           ResourceUsage `json:"memory_mb"`
+	DiskMB             ResourceUsage `json:"disk_mb"`
+	ActiveAllocations  int           `json:"active_allocations"`
+	MonthlyEstimateUSD float64       `json:"monthly_estimate_usd,omitempty"`
+}
+
+type CostSnapshot struct {
+	GeneratedAt time.Time   `json:"generated_at"`
+	Summary     CostSummary `json:"summary"`
+	Apps        []CostApp   `json:"apps,omitempty"`
+	Nodes       []CostNode  `json:"nodes,omitempty"`
+}
+
 type JoinTokenResponse struct {
 	Address    string `json:"address"`     // host:port of Nomad server
 	Token      string `json:"token"`       // bootstrap token (or empty if ACLs disabled)
