@@ -45,23 +45,45 @@ func (s *Server) prepareFunctionBuild(ctx context.Context, src string, req *api.
 	return os.WriteFile(filepath.Join(src, "Dockerfile.blob-function"), []byte(renderFunctionDockerfile(root, handler)), 0o644)
 }
 
+var functionHandlerCandidates = []string{
+	"index.mjs", "index.js", "index.cjs",
+	"function.mjs", "function.js", "function.cjs",
+	"handler.mjs", "handler.js", "handler.cjs",
+}
+
 func functionHandler(src, root, configured string) (string, error) {
 	if configured != "" {
 		handler, err := cleanFunctionPath(configured, "")
 		if err != nil {
 			return "", fmt.Errorf("function handler: %w", err)
 		}
-		if _, err := os.Stat(filepath.Join(src, filepath.FromSlash(root), filepath.FromSlash(handler))); err != nil {
-			return "", fmt.Errorf("function handler %q does not exist under root %q", handler, root)
+		if err := validateFunctionHandlerPath(filepath.Join(src, filepath.FromSlash(root), filepath.FromSlash(handler))); err != nil {
+			return "", fmt.Errorf("function handler %q under root %q: %w", handler, root, err)
 		}
 		return handler, nil
 	}
-	for _, candidate := range []string{"index.mjs", "index.js", "function.mjs", "function.js", "handler.mjs", "handler.js"} {
-		if _, err := os.Stat(filepath.Join(src, filepath.FromSlash(root), candidate)); err == nil {
+	for _, candidate := range functionHandlerCandidates {
+		if validateFunctionHandlerPath(filepath.Join(src, filepath.FromSlash(root), candidate)) == nil {
 			return candidate, nil
 		}
 	}
 	return "", fmt.Errorf("function handler not found under root %q; set handler: index.js or pass --handler", root)
+}
+
+func validateFunctionHandlerPath(path string) error {
+	st, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !st.Mode().IsRegular() {
+		return fmt.Errorf("not a regular file")
+	}
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".js", ".mjs", ".cjs":
+		return nil
+	default:
+		return fmt.Errorf("handler must be .js, .mjs, or .cjs")
+	}
 }
 
 func cleanFunctionPath(path, def string) (string, error) {

@@ -9,9 +9,32 @@ blob from-netlify <dir-or-netlify.toml> [--yes]
 blob deploy --from <kind> <path>
 ```
 
-Available kinds: `compose`, `procfile`, `fly`, `nextjs`, `netlify`, `render`, `vercel`, `nix`, `helm`, `kubernetes`.
+Available kinds: `compose`, `procfile`, `fly`, `nextjs`, `netlify`, `render`, `vercel`, `nix`, `helm`, `kubernetes`, `cloudflare-workers`.
 
 Every importer prints the generated YAML and a list of warnings about anything it could not translate. Existing files are not overwritten unless `--yes` is passed.
+
+## Cloudflare Workers (`import cloudflare-workers`)
+
+Accepts a Worker directory containing `wrangler.toml`, `wrangler.json`, or `wrangler.jsonc`; it can also accept a Worker entrypoint file directly.
+
+| Wrangler config | blob.yaml |
+|---|---|
+| `name` | manifest `name` |
+| `main` | bundled Worker entrypoint |
+| `vars` | `env:` map |
+| `[build] command` | prepended to the generated bundling build |
+| default Worker export / `fetch` handler | `form: function` through a generated adapter |
+
+The importer writes `.blob-worker-adapter.mjs` next to `blob.yaml` and sets `handler: .blob-worker-adapter.mjs`. The generated `build:` command runs `esbuild` inside `node:22-alpine`, bundles the configured Worker entrypoint to `.blob-worker-worker.mjs`, and removes temporary `node_modules` before the final function image build. TypeScript entrypoints work without requiring Node or npm on the Blob host.
+
+Dropped with warnings: compatibility dates/flags, Workers routes, `workers_dev`, cron triggers, Pages assets, KV, D1, R2, Durable Objects, queues, service bindings, and analytics bindings. Recreate those as Blob custom domains, jobs, static sites, managed services, env, or secrets.
+
+```sh
+blob import cloudflare-workers . --yes
+blob deploy --from cloudflare-workers .
+```
+
+Aliases: `workers` and `wrangler`.
 
 ## Helm (`import helm`)
 

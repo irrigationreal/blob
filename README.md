@@ -64,7 +64,7 @@ The same platform host runs these via `blob import compose|procfile|fly` → `bl
 | **Postgres backups** (`blob postgres backup/backups/restore`) | shipped  |
 | **Off-host backup shipping** to S3-compatible stores + scheduled cron + retention | shipped  |
 | **Observability**: managed Loki + Grafana + Promtail; `blob logs --since/--grep/--follow` queries Loki when registered, falls back to nomad alloc tail | shipped  |
-| **Importers**: `blob import compose|procfile|fly|nextjs|netlify|render|vercel|nix|helm|kubernetes` translate third-party manifests to blob.yaml; `blob deploy --from <kind> <path>` does both in one shot | shipped  |
+| **Importers**: `blob import compose|procfile|fly|nextjs|netlify|render|vercel|nix|helm|kubernetes|cloudflare-workers` translate third-party manifests to blob.yaml; `blob deploy --from <kind> <path>` does both in one shot | shipped  |
 | **Preview environments**: `blob preview create <app> --branch <name>` for ephemeral per-branch deploys at `<app>-<branch>.<base>`; multi-component preview ships in v0.13; GitHub webhook auto-create on PR open/synchronize/close in v0.13 | shipped  |
 | **Object storage**: managed S3-compatible (`blob storage create <name>`); `services: [<storage>]` injects S3_ENDPOINT/S3_BUCKET/S3_ACCESS_KEY/S3_SECRET_KEY (+ AWS_* aliases) | shipped  |
 | **Managed MySQL** (`blob mysql create`); `services: [<mysql>]` injects MYSQL_URL/MYSQL_HOST/MYSQL_PORT/MYSQL_USER/MYSQL_PASSWORD/MYSQL_DATABASE | shipped  |
@@ -228,11 +228,11 @@ Each component becomes its own Nomad job named `<app>-<component>` (e.g. `my-app
 
 ```
 blob init [--name N] [--port P] [--domain D] [--form F] [--root D]
-blob import <compose|procfile|fly|nextjs|netlify|render|vercel|nix|helm|kubernetes> <path>
+blob import <compose|procfile|fly|nextjs|netlify|render|vercel|nix|helm|kubernetes|cloudflare-workers> <path>
 blob login --endpoint URL [--token T]
 blob deploy [--name N] [--port P] [--domain D] [--image IMG] [--env ENV] [--cpu C] [--memory M] [--replicas N]
 blob deploy --function [--handler FILE]
-blob deploy --from <compose|procfile|fly|nextjs|netlify|render|vercel|nix|helm|kubernetes> <path>
+blob deploy --from <compose|procfile|fly|nextjs|netlify|render|vercel|nix|helm|kubernetes|cloudflare-workers> <path>
 blob list
 blob status <app>
 blob logs <app> [-n 200]

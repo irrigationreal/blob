@@ -95,6 +95,70 @@ func TestVercelStaticImporter(t *testing.T) {
 	}
 }
 
+func TestCloudflareWorkersTomlImporter(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "wrangler.toml"), `name = "Edge API"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+[vars]
+GREETING = "hello"
+
+[[kv_namespaces]]
+binding = "CACHE"
+id = "abc123"
+`)
+	writeTestFile(t, filepath.Join(dir, "src", "index.ts"), `export default { fetch() { return new Response("ok") } }`)
+	res, err := CloudflareWorkers(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := res.Manifest
+	if res.Source != "cloudflare-workers" || m.Name != "edge-api" || m.Form != "function" || m.Runtime != "nodejs" || m.Handler != ".blob-worker-adapter.mjs" {
+		t.Fatalf("manifest = %+v", m.Component)
+	}
+	if got := m.Env["GREETING"]; got != "hello" {
+		t.Fatalf("GREETING = %q", got)
+	}
+	if !strings.Contains(m.Build, "docker run") || !strings.Contains(m.Build, "esbuild") || !strings.Contains(m.Build, "src/index.ts") {
+		t.Fatalf("unexpected build command: %s", m.Build)
+	}
+	if !strings.Contains(string(res.ExtraFiles[".blob-worker-adapter.mjs"]), "worker.fetch") {
+		t.Fatalf("adapter missing fetch bridge:\n%s", res.ExtraFiles[".blob-worker-adapter.mjs"])
+	}
+	warnings := strings.Join(res.Warnings, "\n")
+	for _, want := range []string{"compatibility_date", "Cloudflare bindings dropped"} {
+		if !strings.Contains(warnings, want) {
+			t.Fatalf("warnings missing %q: %#v", want, res.Warnings)
+		}
+	}
+}
+
+func TestCloudflareWorkersJSONCImporter(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "wrangler.jsonc"), `{
+  // jsonc comments are accepted by Wrangler
+  "name": "json-worker",
+  "main": "worker.js",
+  "vars": {"COUNT": 3},
+  "triggers": {"crons": ["*/5 * * * *"]}
+}`)
+	writeTestFile(t, filepath.Join(dir, "worker.js"), `export default { async fetch() { return new Response("ok") } }`)
+	res, err := CloudflareWorkers(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Manifest.Name != "json-worker" || res.Manifest.Handler != ".blob-worker-adapter.mjs" {
+		t.Fatalf("manifest = %+v", res.Manifest.Component)
+	}
+	if got := res.Manifest.Env["COUNT"]; got != "3" {
+		t.Fatalf("COUNT = %q", got)
+	}
+	if !strings.Contains(strings.Join(res.Warnings, "\n"), "cron triggers dropped") {
+		t.Fatalf("expected cron warning, got %#v", res.Warnings)
+	}
+}
+
 func TestNixFlakeImporterGeneratesDockerfile(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "flake.nix"), `{
@@ -353,6 +417,9 @@ func withFakeHelm(t *testing.T, rendered string) {
 
 func writeTestFile(t *testing.T, path, body string) {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}

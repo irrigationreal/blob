@@ -255,13 +255,46 @@ var envRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`)
 func validName(s string) bool { return nameRE.MatchString(s) }
 func validEnv(s string) bool  { return s == "" || envRE.MatchString(s) }
 func validDeployForm(s string) bool {
-	switch strings.TrimSpace(s) {
+	switch s {
 	case "", "web-service", "daemon", "job", "cronjob", "static", "function":
 		return true
 	default:
 		return false
 	}
 }
+
+func newBuildTag(id string) string {
+	return id + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+}
+
+func isBlobBuildImageRef(image, sourceApp string) bool {
+	if strings.Contains(image, "/") {
+		return false
+	}
+	repo, tag, ok := strings.Cut(image, ":")
+	return ok && repo == sourceApp && isBlobBuildTag(tag)
+}
+
+func isBlobBuildTag(tag string) bool {
+	if len(tag) == 10 && allDigits(tag) {
+		return true
+	}
+	idx := strings.LastIndex(tag, "-")
+	if idx <= 0 || idx == len(tag)-1 {
+		return false
+	}
+	return validName(tag[:idx]) && len(tag[idx+1:]) >= 18 && allDigits(tag[idx+1:])
+}
+
+func allDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return s != ""
+}
+
 func validIsolation(s string) bool {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "", "docker", "kata":
@@ -692,7 +725,7 @@ func (s *Server) deployFromSource(ctx context.Context, src string, req *api.Depl
 
 	tag := req.Tag
 	if tag == "" {
-		tag = strconv.FormatInt(time.Now().Unix(), 10)
+		tag = newBuildTag(id)
 	}
 	image := fmt.Sprintf("%s/%s:%s", s.cfg.Registry, sourceApp, tag)
 
@@ -786,33 +819,10 @@ func (s *Server) deployImage(ctx context.Context, req *api.DeployRequest, source
 	}
 	image := req.Tag
 	// Image references without a registry prefix:
-	//   - "myapp:1234567890"  → blob's own registry (build-pushed by us)
-	//   - "nginx:alpine"      → Docker Hub library image (do NOT rewrite)
-	// We can't tell apart by name alone. Heuristic: if the tag matches our
-	// build-tag shape (10-digit unix timestamp), it's our own; otherwise
-	// treat as a public image and pass through to the docker daemon. This
-	// matches what `blob deploy --image` users expect when importing
-	// compose/fly manifests that reference upstream library images.
-	if !strings.Contains(image, "/") {
-		colon := strings.LastIndex(image, ":")
-		looksLikeBuildTag := false
-		if colon > 0 && colon < len(image)-1 {
-			tag := image[colon+1:]
-			if len(tag) == 10 {
-				digits := true
-				for _, r := range tag {
-					if r < '0' || r > '9' {
-						digits = false
-						break
-					}
-				}
-				looksLikeBuildTag = digits
-			}
-		}
-		if looksLikeBuildTag {
-			image = s.cfg.Registry + "/" + image
-		}
-		// else: leave as-is so docker pulls from docker.io/library/<name>:<tag>
+	//   - "myapp:myapp-1700000000000000000"  → blob's own registry (build-pushed by us)
+	//   - "nginx:alpine"                      → Docker Hub library image (do NOT rewrite)
+	if isBlobBuildImageRef(image, sourceApp) {
+		image = s.cfg.Registry + "/" + image
 	}
 	out.Image = image
 	if err := s.resolveSecrets(req); err != nil {

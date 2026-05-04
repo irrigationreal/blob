@@ -24,9 +24,36 @@ func TestFunctionHandlerDetectsIndexMJS(t *testing.T) {
 	}
 }
 
+func TestFunctionHandlerDetectsIndexCJS(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.cjs"), []byte("module.exports = () => ({ok:true})"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := functionHandler(dir, ".", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handler != "index.cjs" {
+		t.Fatalf("handler = %q", handler)
+	}
+}
+
 func TestFunctionHandlerRejectsTraversal(t *testing.T) {
 	if _, err := functionHandler(t.TempDir(), ".", "../index.js"); err == nil {
 		t.Fatal("expected traversal rejection")
+	}
+}
+
+func TestFunctionHandlerRejectsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "target.js"), []byte("export default () => ({ok:true})"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("target.js", filepath.Join(dir, "index.js")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := functionHandler(dir, ".", "index.js"); err == nil {
+		t.Fatal("expected symlink handler rejection")
 	}
 }
 

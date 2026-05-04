@@ -1,6 +1,6 @@
 ---
 name: blob
-description: Deploy the current folder to The Blob - a self-hosted Fly.io-style platform. Use this skill when the user says "deploy this", "ship this", "blob this", or asks to put a project online. Wraps `blobctl` (the CLI) and produces a working public HTTPS URL from Dockerfile, Compose, static, function, Render, Vercel, Nix flake, Helm chart, Kubernetes manifest, or blob.yaml projects.
+description: Deploy the current folder to The Blob - a self-hosted Fly.io-style platform. Use this skill when the user says "deploy this", "ship this", "blob this", or asks to put a project online. Wraps `blobctl` (the CLI) and produces a working public HTTPS URL from Dockerfile, Compose, static, function, Render, Vercel, Nix flake, Helm chart, Kubernetes manifest, Cloudflare Workers, or blob.yaml projects.
 ---
 
 # The Blob - `/blob` skill
@@ -10,7 +10,7 @@ The Blob is a self-hosted PaaS. The CLI is `blob` (also installable as `blobctl`
 ## When to use this skill
 
 - User says: "deploy this", "ship this", "put this online", "blob this", "let's deploy".
-- A folder contains a `Dockerfile`, Compose file, `blob.yaml`, `render.yaml`, `vercel.json`, `flake.nix`, `Chart.yaml`, static `index.html`, or a runnable language project.
+- A folder contains a `Dockerfile`, Compose file, `blob.yaml`, `render.yaml`, `vercel.json`, `wrangler.toml`, `flake.nix`, `Chart.yaml`, static `index.html`, or a runnable language project.
 - User wants to redeploy, roll back, tail logs, or destroy a Blob app.
 
 If the project is clearly not a deployable web service or static site (for example, a library), say so and stop. Don't force a deploy.
@@ -21,14 +21,14 @@ The user must have:
 
 - `blob` CLI installed (`curl -fsSL https://raw.githubusercontent.com/darvell/blob/main/scripts/install.sh | sh`)
 - An endpoint configured: `blob login --endpoint https://blob.irrigate.cc --token $TOKEN`
-- A deployable project with `blob.yaml`, Dockerfile, Compose, Render, Vercel, Nix flake, Helm chart, static files, or an `--image` to deploy directly
+- A deployable project with `blob.yaml`, Dockerfile, Compose, Render, Vercel, Cloudflare Workers, Nix flake, Helm chart, static files, or an `--image` to deploy directly
 
 If `blob whoami` fails, walk the user through `blob login` first.
 
 ## Deploy flow
 
 1. Make sure you're in the project root: `pwd` should show the folder containing the deploy manifest or app files.
-2. If there's no `blob.yaml` and a third-party manifest exists, run `blob import <compose|procfile|fly|nextjs|netlify|render|vercel|nix|helm|kubernetes> <path> --yes`. Otherwise run `blob init [--name <slug>] [--port <p>] [--domain <d>]`.
+2. If there's no `blob.yaml` and a third-party manifest exists, run `blob import <compose|procfile|fly|nextjs|netlify|render|vercel|nix|helm|kubernetes|cloudflare-workers> <path> --yes`. Otherwise run `blob init [--name <slug>] [--port <p>] [--domain <d>]`.
 3. Run `blob deploy`. The CLI streams phase timings: registry-login, build, push, schedule, ready.
 4. On success, print the URL the CLI returned. Do NOT make up URLs — only echo what the CLI gave you.
 5. Curl-test the URL (`curl -sSf <url>`) and report the response so the user can see it works.
