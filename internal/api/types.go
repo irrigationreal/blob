@@ -53,9 +53,9 @@ type Sidecar struct {
 // DeployAppRequest deploys a multi-component App. Each Component becomes its
 // own Nomad job; the App as a whole shares the env/environment.
 type DeployAppRequest struct {
-	App         string             `json:"app"`
-	Environment string             `json:"environment,omitempty"`
-	Components  []DeployRequest    `json:"components"`
+	App         string          `json:"app"`
+	Environment string          `json:"environment,omitempty"`
+	Components  []DeployRequest `json:"components"`
 }
 
 type DeployResponse struct {
@@ -162,12 +162,12 @@ type AttachDomainRequest struct {
 
 // Doctor
 type DoctorIssue struct {
-	Severity   string `json:"severity"`   // P1 | P2 | P3 | info
-	Category   string `json:"category"`   // routing | nomad | registry | secrets | drift | host
-	App        string `json:"app,omitempty"`
-	Title      string `json:"title"`
-	Detail     string `json:"detail,omitempty"`
-	Remediate  string `json:"remediate,omitempty"`
+	Severity  string `json:"severity"` // P1 | P2 | P3 | info
+	Category  string `json:"category"` // routing | nomad | registry | secrets | drift | host
+	App       string `json:"app,omitempty"`
+	Title     string `json:"title"`
+	Detail    string `json:"detail,omitempty"`
+	Remediate string `json:"remediate,omitempty"`
 }
 
 type DoctorResponse struct {
@@ -193,8 +193,8 @@ type Node struct {
 	Name       string            `json:"name"`
 	Address    string            `json:"address"`
 	Datacenter string            `json:"datacenter"`
-	Status     string            `json:"status"`     // ready | down | initializing
-	Eligible   string            `json:"eligible"`   // eligible | ineligible
+	Status     string            `json:"status"`   // ready | down | initializing
+	Eligible   string            `json:"eligible"` // eligible | ineligible
 	Drain      bool              `json:"drain"`
 	NodeClass  string            `json:"node_class,omitempty"`
 	Labels     map[string]string `json:"labels,omitempty"`
@@ -212,21 +212,21 @@ type JoinTokenResponse struct {
 
 // Custom domain attach. Mode is one of: platform-base, user-managed, user-external.
 type DomainAttachRequest struct {
-	App   string `json:"app"`
-	Host  string `json:"host"`
-	Mode  string `json:"mode,omitempty"` // optional; default platform-base/user-external auto-detected
+	App  string `json:"app"`
+	Host string `json:"host"`
+	Mode string `json:"mode,omitempty"` // optional; default platform-base/user-external auto-detected
 }
 
 type DomainAttachResponse struct {
-	App         string             `json:"app"`
-	Host        string             `json:"host"`
-	URL         string             `json:"url"`
-	Mode        string             `json:"mode"`
-	DNSRecords  []DNSRecord        `json:"dns_records,omitempty"` // for user-external mode
+	App        string      `json:"app"`
+	Host       string      `json:"host"`
+	URL        string      `json:"url"`
+	Mode       string      `json:"mode"`
+	DNSRecords []DNSRecord `json:"dns_records,omitempty"` // for user-external mode
 }
 
 type DNSRecord struct {
-	Type  string `json:"type"`  // A | CNAME | TXT
+	Type  string `json:"type"` // A | CNAME | TXT
 	Name  string `json:"name"`
 	Value string `json:"value"`
 	TTL   int    `json:"ttl,omitempty"`
@@ -261,11 +261,11 @@ type Postgres struct {
 	Version   string    `json:"version"`
 	Database  string    `json:"database"`
 	User      string    `json:"user"`
-	Host      string    `json:"host"`     // public host other workloads connect through
-	Port      int       `json:"port"`     // host static port allocated for this instance
+	Host      string    `json:"host"` // public host other workloads connect through
+	Port      int       `json:"port"` // host static port allocated for this instance
 	JobID     string    `json:"job_id"`
-	URLMasked string    `json:"url"`      // postgres://user:***@host:port/db
-	Status    string    `json:"status"`   // running | pending | dead
+	URLMasked string    `json:"url"`    // postgres://user:***@host:port/db
+	Status    string    `json:"status"` // running | pending | dead
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -344,20 +344,20 @@ type PostgresProjectURL struct {
 
 // Off-host backup configuration (per Postgres instance).
 type PostgresBackupConfig struct {
-	Instance         string `json:"instance"`
-	DestinationKind  string `json:"destination_kind"`             // currently only "s3" (S3-compatible incl. MinIO/R2/B2)
-	S3Endpoint       string `json:"s3_endpoint,omitempty"`        // e.g. https://minio.irrigate.cc; empty = AWS public endpoints
-	S3Region         string `json:"s3_region,omitempty"`          // e.g. us-east-1; default us-east-1
-	S3Bucket         string `json:"s3_bucket"`
-	S3Prefix         string `json:"s3_prefix,omitempty"`          // e.g. demo/ ; trailing slash optional
-	S3AccessKeyID    string `json:"s3_access_key_id"`
+	Instance          string `json:"instance"`
+	DestinationKind   string `json:"destination_kind"`      // currently only "s3" (S3-compatible incl. MinIO/R2/B2)
+	S3Endpoint        string `json:"s3_endpoint,omitempty"` // e.g. https://minio.irrigate.cc; empty = AWS public endpoints
+	S3Region          string `json:"s3_region,omitempty"`   // e.g. us-east-1; default us-east-1
+	S3Bucket          string `json:"s3_bucket"`
+	S3Prefix          string `json:"s3_prefix,omitempty"` // e.g. demo/ ; trailing slash optional
+	S3AccessKeyID     string `json:"s3_access_key_id"`
 	S3SecretAccessKey string `json:"s3_secret_access_key,omitempty"` // never emitted in GET responses; mask via API
-	S3UsePathStyle   bool   `json:"s3_use_path_style,omitempty"`  // MinIO/R2 default true; AWS false
-	Schedule         string `json:"schedule,omitempty"`           // 5-field cron in UTC; default "0 3 * * *"
-	RetentionDaily   int    `json:"retention_daily,omitempty"`    // default 7
-	RetentionWeekly  int    `json:"retention_weekly,omitempty"`   // default 4
-	RetentionMonthly int    `json:"retention_monthly,omitempty"`  // default 6
-	Enabled          bool   `json:"enabled"`
+	S3UsePathStyle    bool   `json:"s3_use_path_style,omitempty"`    // MinIO/R2 default true; AWS false
+	Schedule          string `json:"schedule,omitempty"`             // 5-field cron in UTC; default "0 3 * * *"
+	RetentionDaily    int    `json:"retention_daily,omitempty"`      // default 7
+	RetentionWeekly   int    `json:"retention_weekly,omitempty"`     // default 4
+	RetentionMonthly  int    `json:"retention_monthly,omitempty"`    // default 6
+	Enabled           bool   `json:"enabled"`
 }
 
 type SetPostgresBackupConfigRequest struct {
@@ -564,7 +564,7 @@ type ListAutoscaleResponse struct {
 // Services rollup (v0.11) — single endpoint that fans out to every
 // managed-service registry.
 type ServiceSummary struct {
-	Kind   string   `json:"kind"`   // postgres | valkey | loki | grafana | promtail | nats | tempo | prometheus
+	Kind   string   `json:"kind"` // postgres | valkey | loki | grafana | promtail | nats | tempo | prometheus
 	Name   string   `json:"name"`
 	Status string   `json:"status"`
 	Host   string   `json:"host,omitempty"`
@@ -773,7 +773,7 @@ type CertBinding struct {
 	App        string    `json:"app"`
 	Hostname   string    `json:"hostname"`
 	CreatedAt  time.Time `json:"created_at"`
-	Verified   bool      `json:"verified"`            // last probe saw a non-blob-issued cert with this SAN
+	Verified   bool      `json:"verified"` // last probe saw a non-blob-issued cert with this SAN
 	LastProbe  time.Time `json:"last_probe,omitempty"`
 	LastIssuer string    `json:"last_issuer,omitempty"`
 	LastError  string    `json:"last_error,omitempty"`
@@ -803,11 +803,11 @@ type VerifyCertResponse struct {
 // services env (so a job bound to a web-service that uses MongoDB sees
 // the same MONGODB_URL etc).
 type RunJobRequest struct {
-	Name    string            `json:"name,omitempty"`     // optional; auto-generated if blank
-	App     string            `json:"app,omitempty"`      // parent app whose services env to inherit
-	Image   string            `json:"image"`              // docker image
-	Command []string          `json:"command,omitempty"`  // command + args (entrypoint override)
-	Env     map[string]string `json:"env,omitempty"`      // additional literal env (overlays inherited)
+	Name    string            `json:"name,omitempty"`    // optional; auto-generated if blank
+	App     string            `json:"app,omitempty"`     // parent app whose services env to inherit
+	Image   string            `json:"image"`             // docker image
+	Command []string          `json:"command,omitempty"` // command + args (entrypoint override)
+	Env     map[string]string `json:"env,omitempty"`     // additional literal env (overlays inherited)
 	CPU     int               `json:"cpu,omitempty"`
 	Memory  int               `json:"memory,omitempty"`
 	Timeout int               `json:"timeout,omitempty"` // seconds; 0 = no timeout
@@ -826,22 +826,22 @@ type ScheduleJobRequest struct {
 }
 
 // JobRun describes either a one-shot job or a periodic parent. For
-// periodic parents, Cron is set; for one-shots, FireID is empty.
-// Status is the Nomad job status (pending/running/dead) for the
-// allocation referenced by FireID, or for the parent in the periodic
-// case.
+// periodic parents, Cron is set and FireCount/CompletedFires summarize
+// the child fires retained by Nomad for this schedule.
 type JobRun struct {
-	ID         string    `json:"id"`         // Nomad job id (or periodic parent id)
-	Name       string    `json:"name"`
-	App        string    `json:"app,omitempty"`
-	Kind       string    `json:"kind"`       // "job" | "cronjob"
-	Cron       string    `json:"cron,omitempty"`
-	Image      string    `json:"image"`
-	Command    []string  `json:"command,omitempty"`
-	Status     string    `json:"status"`
-	CreatedAt  time.Time `json:"created_at"`
-	FinishedAt time.Time `json:"finished_at,omitempty"`
-	ExitCode   int       `json:"exit_code,omitempty"`
+	ID             string    `json:"id"` // Nomad job id (or periodic parent id)
+	Name           string    `json:"name"`
+	App            string    `json:"app,omitempty"`
+	Kind           string    `json:"kind"` // "job" | "cronjob"
+	Cron           string    `json:"cron,omitempty"`
+	Image          string    `json:"image"`
+	Command        []string  `json:"command,omitempty"`
+	Status         string    `json:"status"`
+	CreatedAt      time.Time `json:"created_at"`
+	FinishedAt     time.Time `json:"finished_at,omitempty"`
+	ExitCode       int       `json:"exit_code,omitempty"`
+	FireCount      int       `json:"fire_count,omitempty"`
+	CompletedFires int       `json:"completed_fires,omitempty"`
 }
 
 type ListJobsResponse struct {

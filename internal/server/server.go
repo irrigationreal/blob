@@ -69,11 +69,12 @@ func DefaultConfig() Config {
 }
 
 type Server struct {
-	cfg       Config
-	secrets   *secrets.Store
+	cfg        Config
+	secrets    *secrets.Store
 	scheduler  *Scheduler
 	autoscaler *autoscaler
-	mu        sync.Mutex
+	jobLogs    *jobLogCollector
+	mu         sync.Mutex
 }
 
 func New(cfg Config) (*Server, error) {
@@ -86,6 +87,8 @@ func New(cfg Config) (*Server, error) {
 	s.scheduler.Start()
 	s.autoscaler = newAutoscaler(s)
 	s.autoscaler.Start()
+	s.jobLogs = newJobLogCollector(s)
+	s.jobLogs.Start()
 	s.initTracing()
 	return s, nil
 }
@@ -97,6 +100,9 @@ func (s *Server) Close() {
 	}
 	if s.autoscaler != nil {
 		s.autoscaler.Stop()
+	}
+	if s.jobLogs != nil {
+		s.jobLogs.Stop()
 	}
 }
 
@@ -648,7 +654,7 @@ func (s *Server) deployFromSource(ctx context.Context, src string, req *api.Depl
 	return out, nil
 }
 
-func isHTTPForm(form string) bool   { return form == "web-service" || form == "static" }
+func isHTTPForm(form string) bool     { return form == "web-service" || form == "static" }
 func isLongRunningForm(f string) bool { return f == "web-service" || f == "daemon" || f == "static" }
 
 func (s *Server) deployImage(ctx context.Context, req *api.DeployRequest, sourceApp string) (*api.DeployResponse, error) {

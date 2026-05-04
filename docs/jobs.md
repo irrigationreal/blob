@@ -31,11 +31,11 @@ blob jobs schedule nightly-backup my-app \
 
 Cron expressions are five fields, UTC. The Nomad `periodic { prohibit_overlap = true }` stanza is set, so a fire that's still running when the next fire is due will skip rather than stack.
 
-`blob jobs logs <id> --fire N` retrieves the Nth fire's logs (1-indexed; `0` or omitted = most recent fire).
+`blob jobs list` shows completed/known fires in the `FIRES` column for periodic jobs. `blob jobs logs <id-or-name> --fire N` retrieves the Nth fire's logs (1-indexed; `0` or omitted = most recent fire). Both the Nomad id (`blob-job-nightly-backup`) and the short name (`nightly-backup`) work.
 
 ```sh
-blob jobs logs blob-job-nightly-backup           # most recent fire
-blob jobs logs blob-job-nightly-backup --fire 3  # third fire
+blob jobs logs nightly-backup           # most recent fire
+blob jobs logs nightly-backup --fire 3  # third fire
 ```
 
 ## Inherited env
@@ -61,6 +61,8 @@ The Services list is persisted in the app's jobMeta on every deploy. Re-deploy a
 | `running`    | one or more allocs running                                 |
 | `dead`       | one-shot terminated (check `exit_code`)                    |
 | `stopped`    | the parent periodic was paused with `nomad job stop`       |
+
+`blobd` also snapshots terminal allocation stdout/stderr into `/srv/blob/userjobs/logs` so older cron fires remain readable after Nomad garbage-collects the alloc directory.
 
 `blob jobs cancel <id>` runs `nomad job stop -purge`, drops the rendered job file, and removes the meta.
 

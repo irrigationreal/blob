@@ -169,7 +169,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.23.0"
+var version = "0.24.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -1280,9 +1280,16 @@ func cmdPostgres(args []string) {
 		}
 		fmt.Printf("%-32s %-10s %-7s %-7s %-12s %s\n", "FILENAME", "SIZE", "LOCAL", "REMOTE", "SHA256", "CREATED")
 		for _, b := range out.Backups {
-			where := func(ok bool) string { if ok { return "yes" }; return "no" }
+			where := func(ok bool) string {
+				if ok {
+					return "yes"
+				}
+				return "no"
+			}
 			short := b.SHA256
-			if len(short) > 12 { short = short[:12] }
+			if len(short) > 12 {
+				short = short[:12]
+			}
 			fmt.Printf("%-32s %-10s %-7s %-7s %-12s %s\n", b.Filename, humanBytes(b.BytesSize), where(b.Local), where(b.Remote), short, b.CreatedAt.Format(time.RFC3339))
 		}
 	case "restore":
@@ -2846,10 +2853,14 @@ func cmdJobs(args []string) {
 			fmt.Println("no jobs")
 			return
 		}
-		fmt.Printf("%-30s %-10s %-25s %-15s %-12s %s\n", "NAME", "KIND", "APP", "CRON", "STATUS", "IMAGE")
+		fmt.Printf("%-30s %-10s %-25s %-15s %-12s %-8s %s\n", "NAME", "KIND", "APP", "CRON", "STATUS", "FIRES", "IMAGE")
 		for _, j := range out.Jobs {
-			fmt.Printf("%-30s %-10s %-25s %-15s %-12s %s\n",
-				j.Name, j.Kind, j.App, j.Cron, j.Status, j.Image)
+			fires := ""
+			if j.Kind == "cronjob" {
+				fires = fmt.Sprintf("%d/%d", j.CompletedFires, j.FireCount)
+			}
+			fmt.Printf("%-30s %-10s %-25s %-15s %-12s %-8s %s\n",
+				j.Name, j.Kind, j.App, j.Cron, j.Status, fires, j.Image)
 		}
 	case "run":
 		head, cmd := splitOnDashDash(args[1:])
