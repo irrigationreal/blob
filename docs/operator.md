@@ -253,18 +253,50 @@ From v0.26 onward, every `blob deploy` writes a deterministic manifest projectio
 
 ## Upgrades
 
-Updating `blobd`:
+Upgrade the CLI and the control plane separately. `scripts/install.sh` installs only the user-facing `blob` CLI; it does not update `blobd` on the platform host.
+
+Updating `blobd` on the platform host:
 
 ```sh
 curl -fsSL -o /tmp/blobd https://github.com/irrigationreal/blob/releases/latest/download/blobd-linux-amd64
 sudo install -m 0755 /tmp/blobd /usr/local/bin/blobd
+sudo /usr/local/bin/blobd --version
 sudo systemctl restart blobd
+sudo systemctl status blobd --no-pager -l
 ```
 
-Updating `blobctl` (laptop):
+Updating `blobctl` / `blob` on a workstation:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/irrigationreal/blob/main/scripts/install.sh | sh
+blob version
+```
+
+Post-upgrade smoke test from an authenticated CLI:
+
+```sh
+blob whoami
+blob doctor
+```
+
+If the service does not come back cleanly, start with:
+
+```sh
+sudo journalctl -u blobd -n 100 --no-pager
+nomad job status blobd-edge
+```
+
+Release assets are part of the install contract. A release must publish binaries with these names for `scripts/install.sh` and the operator commands above to work:
+
+```text
+blobctl-darwin-amd64
+blobctl-darwin-arm64
+blobctl-linux-amd64
+blobctl-linux-arm64
+blobd-darwin-amd64
+blobd-darwin-arm64
+blobd-linux-amd64
+blobd-linux-arm64
 ```
 
 ## Logs to look at when something's weird

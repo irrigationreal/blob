@@ -118,6 +118,9 @@ plugin "docker" {
   config {
     allow_privileged = false
     allow_runtimes   = ["runc", "kata-runtime"]
+    volumes {
+      enabled = true
+    }
   }
 }
 EOF
@@ -176,7 +179,10 @@ job "edge-traefik" {
           "--certificatesresolvers.le.acme.httpchallenge.entrypoint=web"
         ]
       }
-      resources { cpu = 200  memory = 256 }
+      resources {
+        cpu    = 200
+        memory = 256
+      }
     }
   }
 }
@@ -214,8 +220,13 @@ job "registry" {
         ports = ["http"]
         volumes = ["/srv/registry:/var/lib/registry", "/etc/blob/registry.htpasswd:/etc/registry.htpasswd:ro"]
       }
-      env { REGISTRY_HTTP_ADDR = ":5000" }
-      resources { cpu = 200  memory = 256 }
+      env {
+        REGISTRY_HTTP_ADDR = ":5000"
+      }
+      resources {
+        cpu    = 200
+        memory = 256
+      }
     }
   }
 }

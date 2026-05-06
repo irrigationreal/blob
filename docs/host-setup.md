@@ -46,7 +46,7 @@ What it installs / configures, in order:
 1. APT prereqs: `ca-certificates`, `curl`, `gnupg`, `ufw`, `lsb-release`, `jq`, `apache2-utils` (for `htpasswd`).
 2. Docker CE + Compose plugin from `download.docker.com`.
 3. Optional Kata Containers when `ENABLE_KATA=1`: downloads the pinned static Kata release, configures Docker runtime `kata-runtime`, runs `kata-runtime check`, and adds `meta { blob_kata = "true" }` to the Nomad client config.
-4. Nomad (latest stable) from `apt.releases.hashicorp.com`. Configures it as a single-node server-and-client at `/etc/nomad.d/blob.hcl`, data dir `/opt/nomad/data`. Enables and starts both `docker` and `nomad`.
+4. Nomad (latest stable) from `apt.releases.hashicorp.com`. Configures it as a single-node server-and-client at `/etc/nomad.d/blob.hcl`, data dir `/opt/nomad/data`, and enables Docker host-volume mounts for the Traefik/registry jobs. Enables and starts both `docker` and `nomad`.
 5. UFW: opens 22/80/443 plus 20000-20099 for optional public TCP services. **Note:** managed-service ports (Loki, Grafana, Tempo, Prometheus, NATS) are NOT opened here. See the [observability doc](observability.md#ufw) for the rules to add before running `blob loki create` etc. — the docker bridge needs `from 172.17.0.0/16` allowed on the relevant port ranges.
 6. Generates the registry htpasswd at `/etc/blob/registry.htpasswd` and the matching plaintext credentials at `/etc/blob/registry-credentials.txt`.
 7. Submits a `traefik:v3.6` Nomad job listening on host ports 80/443 with ACME via HTTP-01, providers.nomad enabled.
@@ -164,6 +164,48 @@ nomad node status -verbose | grep 'blob_kata = true'
 
 If no eligible Kata node exists, Nomad leaves the allocation pending instead of falling back to the normal Docker runtime.
 
+
+## Changing the base domain
+
+Blob treats the base domain as platform configuration. Changing it after bootstrap is possible, but it is not just a DNS change. Update each place that bakes in the old domain:
+
+1. Point the new apex and wildcard DNS records at the host:
+
+   ```text
+   A    <base-domain>      <public-ip>
+   A    *.<base-domain>    <public-ip>
+   ```
+
+2. Update the `blobd` systemd unit flags:
+
+   ```text
+   --base-domain <base-domain>
+   --registry registry.<base-domain>
+   ```
+
+   Then reload and restart:
+
+   ```sh
+   sudo systemctl daemon-reload
+   sudo systemctl restart blobd
+   ```
+
+3. Update and resubmit the Nomad edge jobs that contain host rules:
+
+   - `edge-traefik` if you changed the ACME email or any static edge settings.
+   - `registry`, replacing `registry.<old-base>` with `registry.<base-domain>`.
+   - `blobd-edge`, replacing `blob.<old-base>` with `blob.<base-domain>`.
+
+4. Log the CLI into the new endpoint and verify:
+
+   ```sh
+   blob login --endpoint https://blob.<base-domain> --token <BLOB_TOKEN>
+   blob whoami
+   blob doctor
+   ```
+
+5. Redeploy apps that should move to the new base domain. Existing Nomad jobs keep their old Traefik host rules until Blob renders and submits a new job for them.
+
 ## Before you run `blob loki create` (or any managed service)
 
 `bootstrap-host.sh` opens public edge ports and the public TCP-service pool, but not the private managed-service ranges. Every managed-service driver (Loki, Grafana, Tempo, Prometheus, NATS) listens on a port range above 13000 and needs the docker bridge to reach it. Apply the rules in [`docs/observability.md#ufw`](observability.md) before creating any of them, or `blob loki create` will succeed in scheduling Nomad's job but the data plane will be unreachable from the rest of the fleet.
@@ -174,6 +216,7 @@ If no eligible Kata node exists, Nomad leaves the allocation pending instead of 
 - **404 from Traefik on `https://blob.<base>`** — the Nomad job didn't get picked up. Check `nomad job status blobd-edge` and `nomad job logs blobd-edge`.
 - **`registry creds: permission denied`** — `/etc/blob/registry-credentials.txt` is not owned by the user blobd runs as. `sudo chown <user>:<user> /etc/blob/*`.
 - **`http: 502 Bad Gateway`** for app deploys — Traefik can't reach Nomad's service registry. Confirm `nomad service info <app>` returns one healthy entry.
+- **Traefik or registry allocation fails with `volumes are not enabled`** — Nomad's Docker plugin is not allowing host path mounts. Ensure `/etc/nomad.d/blob.hcl` has `plugin "docker" { config { volumes { enabled = true } } }`, then `sudo systemctl restart nomad` and resubmit the failed job.
 - **Cert issuance fails** — Let's Encrypt rate-limited you, or HTTP-01 can't reach port 80. Check `nomad alloc logs <traefik-alloc-id>` for ACME errors.
 - **`blob loki create` succeeds but the data plane is unreachable** — UFW doesn't allow the docker bridge to the managed-service port range. See observability.md.
 
