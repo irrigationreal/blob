@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/darvell/blob/internal/api"
+	"github.com/irrigationreal/blob/internal/api"
 )
 
 func (s *Server) prepareFunctionBuild(ctx context.Context, src string, req *api.DeployRequest) error {

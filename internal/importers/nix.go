@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/darvell/blob/internal/manifest"
+	"github.com/irrigationreal/blob/internal/manifest"
 )
 
 // NixFlake imports a flake.nix project. It emits a web-service manifest and a

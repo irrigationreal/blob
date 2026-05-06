@@ -17,13 +17,13 @@ The result: your `blob deploy` from a laptop produces `https://<name>.<your-doma
 The Blob currently runs on top of Nomad + Docker + Traefik + a private OCI registry. The `scripts/bootstrap-host.sh` in this repo installs all four. Run it once on the host:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/darvell/blob/main/scripts/bootstrap-host.sh | sudo BASE_DOMAIN=example.com sh
+curl -fsSL https://raw.githubusercontent.com/irrigationreal/blob/main/scripts/bootstrap-host.sh | sudo BASE_DOMAIN=example.com sh
 ```
 
 For a host that can run microVM workloads, expose hardware virtualization at `/dev/kvm` and opt in during bootstrap:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/darvell/blob/main/scripts/bootstrap-host.sh \
+curl -fsSL https://raw.githubusercontent.com/irrigationreal/blob/main/scripts/bootstrap-host.sh \
   | sudo BASE_DOMAIN=example.com ENABLE_KATA=1 sh
 ```
 
@@ -60,7 +60,7 @@ If you'd rather wire your own substrate, read the script — it documents every 
 
 ```sh
 # On the host
-curl -fsSL -o /tmp/blobd https://github.com/darvell/blob/releases/latest/download/blobd-linux-amd64
+curl -fsSL -o /tmp/blobd https://github.com/irrigationreal/blob/releases/latest/download/blobd-linux-amd64
 sudo install -m 0755 /tmp/blobd /usr/local/bin/blobd
 sudo /usr/local/bin/blobd --version
 ```

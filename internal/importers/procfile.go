@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/darvell/blob/internal/manifest"
+	"github.com/irrigationreal/blob/internal/manifest"
 )
 
 // Procfile parses a Heroku-style Procfile at path. Each line is

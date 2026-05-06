@@ -16,7 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/darvell/blob/internal/manifest"
+	"github.com/irrigationreal/blob/internal/manifest"
 )
 
 // Detect returns a Component populated with reasonable defaults for the given

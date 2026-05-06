@@ -51,7 +51,7 @@ Or paste it into a remote console session.
 If you don't have a laptop with `blob` installed (e.g. provisioning the second node from CI, or the operator who set up the platform isn't around), use the static `scripts/bootstrap-client.sh` companion to `bootstrap-host.sh`:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/darvell/blob/main/scripts/bootstrap-client.sh \
+curl -fsSL https://raw.githubusercontent.com/irrigationreal/blob/main/scripts/bootstrap-client.sh \
   | sudo BLOB_SERVER_RPC=65.21.9.22:4647 \
          REGISTRY=registry.example.com \
          REGISTRY_USER=blob \

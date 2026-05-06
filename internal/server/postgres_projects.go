@@ -39,7 +39,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/darvell/blob/internal/api"
+	"github.com/irrigationreal/blob/internal/api"
 )
 
 // projectRE matches valid project identifiers. Stricter than blob name rules

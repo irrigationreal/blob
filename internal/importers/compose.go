@@ -10,7 +10,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/darvell/blob/internal/manifest"
+	"github.com/irrigationreal/blob/internal/manifest"
 )
 
 // Compose parses a docker-compose.yaml at path and returns a blob.yaml

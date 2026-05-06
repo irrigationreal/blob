@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/darvell/blob/internal/manifest"
+	"github.com/irrigationreal/blob/internal/manifest"
 )
 
 // Vercel parses vercel.json and emits a blob.yaml for Blob's static or

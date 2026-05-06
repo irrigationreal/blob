@@ -1,4 +1,4 @@
-module github.com/darvell/blob
+module github.com/irrigationreal/blob
 
 go 1.25.5
 

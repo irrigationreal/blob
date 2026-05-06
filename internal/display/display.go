@@ -3,7 +3,7 @@ package display
 import (
 	"strconv"
 
-	"github.com/darvell/blob/internal/api"
+	"github.com/irrigationreal/blob/internal/api"
 )
 
 func ResourceUsage(u api.ResourceUsage, suffix string) string {

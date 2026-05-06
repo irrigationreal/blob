@@ -256,7 +256,7 @@ From v0.26 onward, every `blob deploy` writes a deterministic manifest projectio
 Updating `blobd`:
 
 ```sh
-curl -fsSL -o /tmp/blobd https://github.com/darvell/blob/releases/latest/download/blobd-linux-amd64
+curl -fsSL -o /tmp/blobd https://github.com/irrigationreal/blob/releases/latest/download/blobd-linux-amd64
 sudo install -m 0755 /tmp/blobd /usr/local/bin/blobd
 sudo systemctl restart blobd
 ```
@@ -264,7 +264,7 @@ sudo systemctl restart blobd
 Updating `blobctl` (laptop):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/darvell/blob/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/irrigationreal/blob/main/scripts/install.sh | sh
 ```
 
 ## Logs to look at when something's weird
