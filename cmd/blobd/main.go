@@ -13,7 +13,7 @@ import (
 	"github.com/irrigationreal/blob/internal/server"
 )
 
-var version = "0.43.0"
+var version = "0.44.0"
 
 func main() {
 	cfg := server.DefaultConfig()

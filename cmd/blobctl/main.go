@@ -223,7 +223,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.43.0"
+var version = "0.44.0"
 
 func main() {
 	if len(os.Args) < 2 {

@@ -126,6 +126,7 @@ Three short docs:
 - **[`docs/tcp-services.md`](docs/tcp-services.md)** — expose daemon workloads on public TCP ports.
 - **[`docs/status-pages.md`](docs/status-pages.md)** — public app status pages with HTML + JSON output.
 - **[`docs/monitors.md`](docs/monitors.md)** — persisted HTTP checks and alert webhooks.
+- **[`docs/releasing.md`](docs/releasing.md)** — how to cut a new release (version bump, tagging, CI workflow).
 
 ## blob.yaml
 
