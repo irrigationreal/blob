@@ -29,7 +29,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/darvell/blob/internal/api"
+	"github.com/irrigationreal/blob/internal/api"
 )
 
 // autoscaler is owned by Server. It consults the persisted configs every

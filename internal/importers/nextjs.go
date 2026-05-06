@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/darvell/blob/internal/manifest"
+	"github.com/irrigationreal/blob/internal/manifest"
 )
 
 // NextJS detects a Next.js project at dir and emits:

@@ -3,7 +3,7 @@ package server
 import (
 	"testing"
 
-	"github.com/darvell/blob/internal/api"
+	"github.com/irrigationreal/blob/internal/api"
 )
 
 func TestAllocationReservationPrefersAllocatedResources(t *testing.T) {

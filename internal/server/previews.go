@@ -23,8 +23,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/darvell/blob/internal/api"
-	"github.com/darvell/blob/internal/manifest"
+	"github.com/irrigationreal/blob/internal/api"
+	"github.com/irrigationreal/blob/internal/manifest"
 )
 
 var branchRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`)

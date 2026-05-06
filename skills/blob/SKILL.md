@@ -19,7 +19,7 @@ If the project is clearly not a deployable web service or static site (for examp
 
 The user must have:
 
-- `blob` CLI installed (`curl -fsSL https://raw.githubusercontent.com/darvell/blob/main/scripts/install.sh | sh`)
+- `blob` CLI installed (`curl -fsSL https://raw.githubusercontent.com/irrigationreal/blob/main/scripts/install.sh | sh`)
 - An endpoint configured: `blob login --endpoint https://blob.irrigate.cc --token $TOKEN`
 - A deployable project with `blob.yaml`, Dockerfile, Compose, Render, Vercel, Cloudflare Workers, Nix flake, Helm chart, static files, or an `--image` to deploy directly
 
@@ -84,4 +84,4 @@ domain: <name>.<base>   # optional; defaults to <name>.<base-domain>
 
 ## Reference
 
-Spec, architecture, and roadmap: <https://github.com/darvell/blob>
+Spec, architecture, and roadmap: <https://github.com/irrigationreal/blob>

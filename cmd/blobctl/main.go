@@ -13,14 +13,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/darvell/blob/internal/api"
-	"github.com/darvell/blob/internal/client"
-	"github.com/darvell/blob/internal/config"
-	"github.com/darvell/blob/internal/detect"
-	"github.com/darvell/blob/internal/display"
-	"github.com/darvell/blob/internal/importers"
-	"github.com/darvell/blob/internal/manifest"
-	"github.com/darvell/blob/internal/tarball"
+	"github.com/irrigationreal/blob/internal/api"
+	"github.com/irrigationreal/blob/internal/client"
+	"github.com/irrigationreal/blob/internal/config"
+	"github.com/irrigationreal/blob/internal/detect"
+	"github.com/irrigationreal/blob/internal/display"
+	"github.com/irrigationreal/blob/internal/importers"
+	"github.com/irrigationreal/blob/internal/manifest"
+	"github.com/irrigationreal/blob/internal/tarball"
 )
 
 const usage = `blobctl — deploy folders to The Blob
@@ -223,7 +223,7 @@ Usage:
   blob version                                    Print version
 `
 
-var version = "0.43.0"
+var version = "0.44.0"
 
 func main() {
 	if len(os.Args) < 2 {

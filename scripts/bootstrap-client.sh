@@ -5,7 +5,7 @@
 # it when the new node can't reach blobd yet (firewalls, fresh provision)
 # but can reach the existing platform host's Nomad RPC port (4647).
 #
-#   curl -fsSL https://raw.githubusercontent.com/darvell/blob/main/scripts/bootstrap-client.sh \
+#   curl -fsSL https://raw.githubusercontent.com/irrigationreal/blob/main/scripts/bootstrap-client.sh \
 #     | sudo BLOB_SERVER_RPC=65.21.9.22:4647 sh
 #
 # Required env:

@@ -9,7 +9,7 @@
 package importers
 
 import (
-	"github.com/darvell/blob/internal/manifest"
+	"github.com/irrigationreal/blob/internal/manifest"
 )
 
 // Result is what every importer returns: the converted manifest, the

@@ -1,7 +1,7 @@
 #!/bin/sh
 # Bootstrap a Debian/Ubuntu host into a one-node Blob.
 #
-#   curl -fsSL https://raw.githubusercontent.com/darvell/blob/main/scripts/bootstrap-host.sh | sudo BASE_DOMAIN=example.com sh
+#   curl -fsSL https://raw.githubusercontent.com/irrigationreal/blob/main/scripts/bootstrap-host.sh | sudo BASE_DOMAIN=example.com sh
 #
 # Required env:
 #   BASE_DOMAIN   — wildcard DNS root (e.g. example.com). Must already point at this host.

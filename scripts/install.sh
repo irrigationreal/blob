@@ -1,11 +1,11 @@
 #!/usr/bin/env sh
 # Install blobctl. Detects OS/arch and downloads the matching release binary.
 #
-#   curl -fsSL https://raw.githubusercontent.com/darvell/blob/main/scripts/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/irrigationreal/blob/main/scripts/install.sh | sh
 #
 set -e
 
-REPO=darvell/blob
+REPO=irrigationreal/blob
 VERSION="${BLOB_VERSION:-latest}"
 PREFIX="${PREFIX:-/usr/local}"
 

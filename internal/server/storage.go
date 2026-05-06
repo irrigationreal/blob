@@ -31,7 +31,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/darvell/blob/internal/api"
+	"github.com/irrigationreal/blob/internal/api"
 )
 
 const (

@@ -8,7 +8,7 @@ This monorepo is The Blob's runtime. Live deployment: <https://blob.irrigate.cc>
 
 ```sh
 # 1. Install blobctl (macOS / Linux, amd64 or arm64)
-curl -fsSL https://raw.githubusercontent.com/darvell/blob/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/irrigationreal/blob/main/scripts/install.sh | sh
 
 # 2. Authenticate
 blob login --endpoint https://blob.irrigate.cc --token $YOUR_TOKEN
@@ -126,6 +126,7 @@ Three short docs:
 - **[`docs/tcp-services.md`](docs/tcp-services.md)** — expose daemon workloads on public TCP ports.
 - **[`docs/status-pages.md`](docs/status-pages.md)** — public app status pages with HTML + JSON output.
 - **[`docs/monitors.md`](docs/monitors.md)** — persisted HTTP checks and alert webhooks.
+- **[`docs/releasing.md`](docs/releasing.md)** — how to cut a new release (version bump, tagging, CI workflow).
 
 ## blob.yaml
 

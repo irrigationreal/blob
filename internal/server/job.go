@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/darvell/blob/internal/api"
+	"github.com/irrigationreal/blob/internal/api"
 )
 
 // renderJob writes an HCL Nomad job for a single Component (DeployRequest).
