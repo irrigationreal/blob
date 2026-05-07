@@ -19,7 +19,7 @@ If the project is clearly not a deployable web service or static site (for examp
 
 The user must have:
 
-- `blob` CLI installed (`curl -fsSL https://raw.githubusercontent.com/irrigationreal/blob/main/scripts/install.sh | sh`)
+- `blob` CLI installed (`curl -fsSL https://raw.githubusercontent.com/irrigationreal/blob/main/scripts/install.sh | sh`). The installer uses `/usr/local/bin` when possible and falls back to `$HOME/.local/bin` when it cannot write there or use sudo.
 - An endpoint configured: `blob login --endpoint https://blob.irrigate.cc --token $TOKEN`
 - A deployable project with `blob.yaml`, Dockerfile, Compose, Render, Vercel, Cloudflare Workers, Nix flake, Helm chart, static files, or an `--image` to deploy directly
 

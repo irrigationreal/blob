@@ -8,6 +8,7 @@ This monorepo is The Blob's runtime. Live deployment: <https://blob.irrigate.cc>
 
 ```sh
 # 1. Install blobctl (macOS / Linux, amd64 or arm64)
+# Installs to /usr/local/bin when possible, otherwise falls back to ~/.local/bin.
 curl -fsSL https://raw.githubusercontent.com/irrigationreal/blob/main/scripts/install.sh | sh
 
 # 2. Authenticate
